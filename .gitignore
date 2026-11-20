@@ -1,0 +1,150 @@
+# ============================================================
+# SECRETS & CREDENTIALS — never commit these
+# ============================================================
+.env
+.env.*
+*.env
+!.env.example
+
+# OAuth tokens & service account keys
+token.json
+token_*.json
+credentials.json
+client_secret*.json
+service_account*.json
+*.p12
+*.pem
+*.key
+
+# iCloud / CalDAV credentials
+icloud_credentials*
+caldav_session*
+
+# ============================================================
+# AI / AGENT CONVERSATION ARTIFACTS
+# ============================================================
+.gemini/
+.agents/
+.agent/
+_agents/
+_agent/
+brain/
+*.conversation
+*.session
+*.agent_state
+
+# ============================================================
+# PYTHON
+# ============================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.virtualenv/
+
+# Testing & coverage
+.pytest_cache/
+.tox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+*.log
+
+# Type checkers & linters
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# ============================================================
+# DATABASE & LOCAL STORAGE
+# ============================================================
+*.sqlite
+*.sqlite3
+*.db
+data/
+local_storage/
+
+# ============================================================
+# NODE / DASHBOARD (if using a JS frontend)
+# ============================================================
+node_modules/
+.next/
+dist/
+.cache/
+*.tsbuildinfo
+
+# ============================================================
+# OS FILES
+# ============================================================
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Linux
+*~
+
+# ============================================================
+# IDEs & EDITORS
+# ============================================================
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# JetBrains
+.idea/
+*.iml
+
+# Cursor
+.cursor/
+
+# Vim / Emacs
+*.swp
+*.swo
+[._]*.un~
+
+# ============================================================
+# LOGS & TEMP FILES
+# ============================================================
+logs/
+*.log
+*.log.*
+tmp/
+temp/
+.tmp/

@@ -1,0 +1,84 @@
+"""LiftAssistant 3.0 CLI Entrypoint."""
+
+import argparse
+import logging
+import sys
+from pathlib import Path
+
+# Force UTF-8 on Windows console
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+
+def init_database():
+    from liftassistant.db.connection import get_db_path, init_db
+    db_path = get_db_path()
+    init_db(db_path)
+    logger.info("Initialized LiftAssistant 3.0 database at %s", db_path)
+
+
+def seed_db():
+    from liftassistant.db.connection import get_db_path, init_db
+    from liftassistant.db.seed import seed_database
+    db_path = get_db_path()
+    init_db(db_path)
+    seed_database(db_path)
+    logger.info("Seeded LiftAssistant 3.0 baseline data at %s", db_path)
+
+
+def evaluate_generators():
+    import sqlite3
+    from datetime import date
+    from liftassistant.db.connection import get_db_path
+    from liftassistant.db.repository import EventGeneratorRepository, EventRepository
+    from liftassistant.services.event_generator_service import EventGeneratorService
+
+    db_path = get_db_path()
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON;")
+
+    gen_repo = EventGeneratorRepository(conn)
+    event_repo = EventRepository(conn)
+    service = EventGeneratorService(gen_repo, event_repo)
+
+    spawned = service.evaluate_and_spawn_all(date.today())
+    logger.info("Evaluated event generators. Spawned %d new event(s).", len(spawned))
+    conn.close()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="LiftAssistant 3.0 CLI")
+    parser.add_argument(
+        "command",
+        nargs="?",
+        default="seed",
+        choices=["init-db", "seed", "evaluate-generators", "api"],
+        help="Command to run (default: seed)",
+    )
+    args = parser.parse_args()
+
+    if args.command == "init-db":
+        init_database()
+    elif args.command == "seed":
+        seed_db()
+    elif args.command == "evaluate-generators":
+        evaluate_generators()
+    elif args.command == "api":
+        import uvicorn
+        logger.info("Starting LiftAssistant 3.0 API Gateway on port 8000...")
+        uvicorn.run("liftassistant.api.app:app", host="0.0.0.0", port=8000, reload=True)
+
+
+if __name__ == "__main__":
+    main()

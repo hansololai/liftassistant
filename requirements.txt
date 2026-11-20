@@ -1,0 +1,33 @@
+# Core framework
+crewai[tools]>=0.11.0
+
+# LLM support (LiteLLM covers Ollama, DeepSeek, OpenAI, Gemini, etc.)
+litellm>=1.40.0
+
+# Configuration
+pydantic>=2.7.0
+pydantic-settings>=2.3.0
+python-dotenv>=1.0.0
+
+# Gmail API
+google-api-python-client>=2.130.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.0
+
+# iCloud CalDAV
+caldav>=1.3.9
+
+# Price tracking
+requests>=2.31.0
+
+# Scheduling
+schedule>=1.2.2
+
+# REST API Gateway (LiftAssistant 3.0)
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+python-multipart>=0.0.9
+sse-starlette>=2.0.0
+
+# Dashboard UI (Legacy)
+streamlit>=1.35.0
