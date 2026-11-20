@@ -22,6 +22,7 @@ import {
   IconCheck,
   IconSparkles,
   IconBell,
+  IconCpu,
 } from '@tabler/icons-react';
 import {
   MOCK_CONFLICTS,
@@ -41,7 +42,7 @@ import { TodayOverview } from './components/TodayOverview';
 import { NotificationsView } from './components/NotificationsView';
 import { EventsView } from './components/EventsView';
 import { PantryView } from './components/PantryView';
-import { ReceiptsView } from './components/ReceiptsView';
+import { WorkersView } from './components/WorkersView';
 import { TripsView } from './components/TripsView';
 import { EventModal } from './components/EventModal';
 import { DeviceLockScreen } from './components/DeviceLockScreen';
@@ -60,8 +61,91 @@ import {
   SnapIntent,
 } from './types';
 
+type TabType = 'today' | 'notifications' | 'events' | 'pantry' | 'workers' | 'trips';
+
+const VALID_TABS: Record<string, TabType> = {
+  today: 'today',
+  alerts: 'notifications',
+  notifications: 'notifications',
+  events: 'events',
+  pantry: 'pantry',
+  workers: 'workers',
+  trips: 'trips',
+};
+
+function getTabFromLocation(): TabType {
+  if (typeof window === 'undefined') return 'today';
+
+  // 1. Check hash e.g. #/workers, #workers, #/events/generators
+  const hashClean = window.location.hash.replace(/^#\/?/, '').toLowerCase();
+  const hashSegment = hashClean.split('/')[0];
+  if (hashSegment && VALID_TABS[hashSegment]) {
+    return VALID_TABS[hashSegment];
+  }
+
+  // 2. Check pathname e.g. /workers, /events
+  const pathClean = window.location.pathname.replace(/^\//, '').toLowerCase();
+  const pathSegment = pathClean.split('/')[0];
+  if (pathSegment && VALID_TABS[pathSegment]) {
+    return VALID_TABS[pathSegment];
+  }
+
+  // 3. Check query param e.g. ?tab=workers
+  const params = new URLSearchParams(window.location.search);
+  const tabParam = (params.get('tab') || '').toLowerCase();
+  if (tabParam && VALID_TABS[tabParam]) {
+    return VALID_TABS[tabParam];
+  }
+
+  return 'today';
+}
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'today' | 'notifications' | 'events' | 'pantry' | 'receipts' | 'trips'>('today');
+  const [activeTab, setActiveTabState] = useState<TabType>(getTabFromLocation);
+
+  const setActiveTab = useCallback((tab: TabType, replace = false) => {
+    setActiveTabState(tab);
+    if (typeof window === 'undefined') return;
+
+    const targetHash = tab === 'today' ? '' : `#/${tab}`;
+    const newUrl = window.location.pathname + targetHash + window.location.search;
+
+    if (window.location.hash !== targetHash) {
+      if (replace) {
+        window.history.replaceState({ tab }, '', newUrl || window.location.pathname);
+      } else {
+        window.history.pushState({ tab }, '', newUrl || window.location.pathname);
+      }
+    }
+  }, []);
+
+  // Listen for browser Back/Forward navigation and external hash changes
+  useEffect(() => {
+    const handleLocationChange = () => {
+      const tab = getTabFromLocation();
+      setActiveTabState(tab);
+    };
+
+    window.addEventListener('popstate', handleLocationChange);
+    window.addEventListener('hashchange', handleLocationChange);
+    return () => {
+      window.removeEventListener('popstate', handleLocationChange);
+      window.removeEventListener('hashchange', handleLocationChange);
+    };
+  }, []);
+
+  // Sync pathname to hash if loaded via direct path (e.g. /workers -> #/workers)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const initialTab = getTabFromLocation();
+    if (initialTab !== 'today' && !window.location.hash) {
+      window.history.replaceState(
+        { tab: initialTab },
+        '',
+        `${window.location.pathname}#/${initialTab}${window.location.search}`
+      );
+    }
+  }, []);
 
   // Application State
   const [conflicts, setConflicts] = useState<ConflictItem[]>(MOCK_CONFLICTS);
@@ -98,7 +182,7 @@ export default function App() {
             setAuthenticated(true);
             setCurrentDeviceName(res.device_name);
             showNotification(`Device Authorized: ${res.device_name}! Tap Share -> "Add to Home Screen".`);
-            window.history.replaceState({}, document.title, window.location.pathname);
+            window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
           }
         } catch (err: any) {
           console.warn('Auto enrollment failed:', err);
@@ -1008,6 +1092,7 @@ export default function App() {
                 places={places}
                 placesLoading={placesLoading}
                 onRefreshPlaces={refreshPlaces}
+                onRefreshEvents={refreshEvents}
                 onSelectEvent={setSelectedEventForModal}
                 onToggleComplete={handleToggleComplete}
               />
@@ -1026,8 +1111,8 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'receipts' && (
-              <ReceiptsView
+            {activeTab === 'workers' && (
+              <WorkersView
                 jobs={jobs}
                 products={products}
                 multipliers={multipliers}
@@ -1035,6 +1120,8 @@ export default function App() {
                 onConfirmJob={handleConfirmReceiptJob}
                 onCreateProduct={handleCreateProduct}
                 onUpsertMultiplier={handleUpsertMultiplier}
+                onSelectEvent={setSelectedEventForModal}
+                onRefreshEvents={refreshEvents}
               />
             )}
 
@@ -1141,19 +1228,19 @@ export default function App() {
 
               <Box
                 style={{ textAlign: 'center', cursor: 'pointer', flex: 1 }}
-                onClick={() => setActiveTab('receipts')}
+                onClick={() => setActiveTab('workers')}
               >
                 <ActionIcon
-                  variant={activeTab === 'receipts' ? 'filled' : 'subtle'}
-                  color="blue"
+                  variant={activeTab === 'workers' ? 'filled' : 'subtle'}
+                  color="indigo"
                   size="md"
                   radius="xl"
                   mx="auto"
                 >
-                  <IconReceipt size={18} />
+                  <IconCpu size={18} />
                 </ActionIcon>
-                <Text size="10px" fw={activeTab === 'receipts' ? 700 : 500} c={activeTab === 'receipts' ? 'blue' : 'dimmed'}>
-                  Receipts
+                <Text size="10px" fw={activeTab === 'workers' ? 700 : 500} c={activeTab === 'workers' ? 'indigo' : 'dimmed'}>
+                  Workers
                 </Text>
               </Box>
 

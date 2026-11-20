@@ -198,9 +198,15 @@ export const EventModal: React.FC<Props> = ({
         conflictReason: event.conflict_reason,
       });
 
+      const existingAmt =
+        event.dining_details?.total_amount ??
+        event.shopping_details?.total_amount ??
+        (event as any).total_amount ??
+        0;
+
       if (event.shopping_details) {
-        setTotal(event.shopping_details.total_amount || 0);
-        setSubtotal(event.shopping_details.total_amount || 0);
+        setTotal(existingAmt);
+        setSubtotal(existingAmt);
         setTax(0);
 
         const sItems = event.shopping_details.line_items || [];
@@ -219,12 +225,52 @@ export const EventModal: React.FC<Props> = ({
         );
       } else {
         setLineItems([]);
-        setTotal(event.dining_details?.total_amount || 0);
-        setSubtotal(event.dining_details?.total_amount || 0);
+        setTotal(existingAmt);
+        setSubtotal(existingAmt);
         setTax(0);
       }
     }
   }, [opened, event, receiptJob, multipliers]);
+
+  // Lazy load full event if opened with a stub event object missing details
+  useEffect(() => {
+    if (opened && event?.id && !event.shopping_details && !event.dining_details && !(event as any).total_amount) {
+      apiClient
+        .getEvent(event.id)
+        .then((fullEvt) => {
+          if (fullEvt) {
+            setTitle(fullEvt.title);
+            if (fullEvt.scheduled_at) {
+              try {
+                const d = new Date(fullEvt.scheduled_at);
+                const y = d.getFullYear();
+                const m = String(d.getMonth() + 1).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                const h = String(d.getHours()).padStart(2, '0');
+                const min = String(d.getMinutes()).padStart(2, '0');
+                setScheduledAt(`${y}-${m}-${day}T${h}:${min}`);
+              } catch {}
+            }
+            const amt =
+              fullEvt.dining_details?.total_amount ??
+              fullEvt.shopping_details?.total_amount ??
+              (fullEvt as any).total_amount ??
+              0;
+            if (amt > 0) {
+              setTotal(amt);
+              setSubtotal(amt);
+            }
+            if (fullEvt.people_involved && fullEvt.people_involved.length > 0) {
+              setSelectedPeople(fullEvt.people_involved);
+            }
+            if (fullEvt.description || fullEvt.notes) {
+              setNotes(fullEvt.description || fullEvt.notes || '');
+            }
+          }
+        })
+        .catch(() => {});
+    }
+  }, [opened, event?.id]);
 
   // Determine if date, duration, or people actually changed compared to initial baseline
   const isTimingOrPeopleChanged = useMemo(() => {
@@ -514,7 +560,7 @@ export const EventModal: React.FC<Props> = ({
               <Paper p="xs" withBorder radius="sm" ta="center" bg="teal.0">
                 <Text size="10px" c="teal.9" fw={700}>TOTAL PAID</Text>
                 <Text fw={800} size="md" c="teal.9">
-                  ${total.toFixed(2)}
+                  ${(total || event?.shopping_details?.total_amount || event?.dining_details?.total_amount || (event as any)?.total_amount || 0).toFixed(2)}
                 </Text>
               </Paper>
             </SimpleGrid>
@@ -670,7 +716,7 @@ export const EventModal: React.FC<Props> = ({
               <Rating value={event?.dining_details?.rating || 5} readOnly size="sm" />
             </Group>
             <Text size="sm" fw={700}>
-              Total Paid: ${(event?.dining_details?.total_amount || total || 0).toFixed(2)}
+              Total Paid: ${(event?.dining_details?.total_amount || event?.shopping_details?.total_amount || (event as any)?.total_amount || total || 0).toFixed(2)}
             </Text>
           </Paper>
         )}

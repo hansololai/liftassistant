@@ -148,3 +148,9 @@ logs/
 tmp/
 temp/
 .tmp/
+scratch/
+.scratch/
+scratch_*
+*.tmp
+*.bak
+*.orig

@@ -23,6 +23,7 @@ class EventCreateRequest(BaseModel):
     duration_minutes: int = 60
     deadline: Optional[datetime] = None
     place_id: Optional[str] = None
+    studio: Optional[str] = None
     place_query: Optional[str] = None
     place_name: Optional[str] = None
     latitude: Optional[float] = None
@@ -190,6 +191,7 @@ async def create_event(
         "duration_minutes": payload.duration_minutes or (30 if lat is not None else 60),
         "deadline": payload.deadline,
         "place_id": payload.place_id,
+        "studio": payload.studio,
         "people_involved": payload.people_involved,
         "notes": payload.notes,
         "total_amount": payload.total_amount,
@@ -220,6 +222,7 @@ class EventUpdateRequest(BaseModel):
     deadline: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     place_id: Optional[str] = None
+    studio: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     people_involved: Optional[List[str]] = None
@@ -240,6 +243,7 @@ class ConflictCheckRequest(BaseModel):
     title: Optional[str] = "Proposed Event"
     people_involved: Optional[List[str]] = None
     place_id: Optional[str] = None
+    studio: Optional[str] = None
     notes: Optional[str] = None
     event_id: Optional[str] = None
 
@@ -256,6 +260,7 @@ def check_event_conflict(
         title=payload.title or "Proposed Event",
         people_involved=payload.people_involved or [],
         place_id=payload.place_id,
+        studio=payload.studio,
         notes=payload.notes,
         exclude_event_id=payload.event_id,
     )

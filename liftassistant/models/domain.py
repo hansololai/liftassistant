@@ -79,6 +79,7 @@ class LifeEvent(BaseModel):
     completed_at: Optional[datetime] = None
     all_day: bool = False
     place_id: Optional[str] = None
+    studio: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     people_involved: List[str] = Field(default_factory=list)
@@ -89,6 +90,7 @@ class LifeEvent(BaseModel):
     has_conflict: bool = False
     conflict_status: Optional[str] = None
     conflict_reason: Optional[str] = None
+    generator_run_id: Optional[str] = None
     
     # Polymorphic joined extensions (loaded via relational joins)
     dining_detail: Optional[DiningDetail] = None
@@ -158,6 +160,13 @@ class GeneratorEventFeedback(BaseModel):
     total_amount: Optional[float] = None
     scheduled_at: Optional[datetime] = None
     deadline: Optional[datetime] = None
+
+    # Joined Facility Closure fields for preview
+    closure_facility_name: Optional[str] = None
+    closure_start: Optional[datetime] = None
+    closure_end: Optional[datetime] = None
+    closure_reason: Optional[str] = None
+    closure_facility_address: Optional[str] = None
 
 
 class LearnedPromptRule(BaseModel):
@@ -303,6 +312,7 @@ class StandardizedReceipt(BaseModel):
     id: str = Field(default_factory=lambda: f"rec_{uuid4().hex[:8]}")
     event_id: Optional[str] = None
     place_id: Optional[str] = None
+    studio: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     file_hash: str

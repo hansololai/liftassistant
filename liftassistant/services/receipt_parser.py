@@ -33,6 +33,12 @@ KNOWN_MERCHANTS: Dict[str, Dict[str, Any]] = {
         "category": "dining",
         "place_id": "pl_madmex",
     },
+    "olive garden": {
+        "name": "Olive Garden Italian Restaurant",
+        "address": "1716 Route 228, Cranberry Twp, PA 16066",
+        "category": "dining",
+        "place_id": "pl_olivegarden",
+    },
     "valvoline": {
         "name": "Valvoline Instant Oil Change",
         "address": "20120 Rte 19, Cranberry Twp, PA 16066",

@@ -52,15 +52,27 @@ def run_tests():
     
     gen = EmailEventGenerator(event_manager=em, place_repo=place_repo, inbox_dir=test_inbox_dir)
 
-    # Load base batch for real emails
-    with open("data/feb20_full_batch.json", "r", encoding="utf-8") as f:
-        batch = json.load(f)
-
     # 1. Receipt Test Case (Procare $200)
-    receipt_email = batch[9]
+    receipt_email = {
+        "id": "msg_procare_receipt_01",
+        "subject": "Payment Receipt",
+        "from": "Procare <connect-notification@online.procaresoftware.com>",
+        "date": "Sat, 21 Feb 2026 02:44:17 +0000 (UTC)",
+        "snippet": "Hello, Online payment of $200.00 was successfully processed on your account. You can view all your transactions online from Procare's Parent Portal.",
+        "body": "Payment of $200.00 received for tuition. Thank you for your payment.",
+        "attachments": [],
+    }
 
     # 2. Manual Bill Test Case (Primrose $200 due)
-    manual_bill_email = batch[24]
+    manual_bill_email = {
+        "id": "msg_primrose_invoice_01",
+        "subject": "Invoice: 20-Feb-2026",
+        "from": "Primrose School of Wexford <connect-notification@online.procaresoftware.com>",
+        "date": "Fri, 20 Feb 2026 17:55:50 +0000 (UTC)",
+        "snippet": "Hello Parent, Primrose School of Wexford has requested a payment of $200, due by February 20, 2026. You can easily and securely pay this online.",
+        "body": "Tuition invoice for $200 due on February 20, 2026.",
+        "attachments": [],
+    }
 
     # 3. Auto-Pay Bill Test Case
     autopay_bill_email = {
@@ -68,12 +80,20 @@ def run_tests():
         "subject": "Your Monthly Electric Bill: Auto-Pay Scheduled",
         "from": "Duquesne Light <billing@duquesnelight.com>",
         "date": "Fri, 20 Feb 2026 10:00:00 -0500",
-        "body": "Hello Han, your bill of $85.50 is ready. Auto-pay is active and $85.50 will be automatically deducted on March 5, 2026.",
+        "body": "Hello Customer, your bill of $85.50 is ready. Auto-pay is active and $85.50 will be automatically deducted on March 5, 2026.",
         "snippet": "Auto-pay is active and $85.50 will be automatically deducted on March 5, 2026.",
     }
 
     # 4. Kid Workshop Test Case (Lowe's Kids Workshop)
-    kids_workshop_email = batch[13]
+    kids_workshop_email = {
+        "id": "msg_lowes_workshop_01",
+        "subject": "Reminder! The Kids Workshop is tomorrow",
+        "from": "Lowe's Home Improvement <lowes@e.lowes.com>",
+        "date": "Fri, 20 Feb 2026 17:05:03 -0600",
+        "snippet": "Pack your aprons and goggles. We'll see you soon. Kids Workshop | Birdhouse Submission tomorrow at 10:00 AM.",
+        "body": "Reminder: Kids Workshop at Lowe's Cranberry Twp tomorrow from 10:00 AM to 1:00 PM.",
+        "attachments": [],
+    }
 
     # 5. YMCA Closure Test Case
     ymca_closure_email = {

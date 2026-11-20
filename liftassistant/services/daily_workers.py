@@ -48,27 +48,18 @@ class CalendarRuleWorker:
         self._lock = threading.Lock()
         self.worker_type = WORKER_TYPE_CALENDAR_RULES
 
-    def trigger_run(self, run_type: str = "MANUAL", reference_date=None) -> GeneratorRun:
-        """Execute recurring rule evaluation and log run lifecycle."""
+    def _execute_run(self, run: GeneratorRun, run_type: str = "MANUAL", reference_date=None) -> GeneratorRun:
+        """Internal execution runner for rule evaluation."""
         with self._lock:
-            started_at = datetime.now()
             with get_db() as conn:
                 gen_repo = EventGeneratorRepository(conn)
                 event_repo = EventRepository(conn)
                 run_repo = GeneratorRunRepository(conn)
                 engine = EventGeneratorService(generator_repo=gen_repo, event_repo=event_repo)
 
-                run = GeneratorRun(
-                    generator_type=self.worker_type,
-                    started_at=started_at,
-                    status="RUNNING",
-                    details_json=json.dumps({"run_type": run_type}),
-                )
-                run_repo.create_run(run)
-
                 try:
                     # Delegate 100% of domain math to core engine
-                    result = engine.evaluate_and_spawn_due_rules(reference_date=reference_date)
+                    result = engine.evaluate_and_spawn_due_rules(reference_date=reference_date, run_id=run.id)
 
                     run.status = "SUCCESS"
                     run.completed_at = datetime.now()
@@ -77,7 +68,18 @@ class CalendarRuleWorker:
                     run.details_json = json.dumps({
                         "run_type": run_type,
                         "summary_message": result["summary_message"],
-                        "spawned_events": [e.id for e in result["events"]],
+                        "event_ids": [e.id for e in result["events"]],
+                        "generated_events": [
+                            {
+                                "id": e.id,
+                                "title": e.title,
+                                "event_type": e.event_type,
+                                "scheduled_at": e.scheduled_at.isoformat() if e.scheduled_at else None,
+                                "deadline": e.deadline.isoformat() if e.deadline else None,
+                                "notes": e.notes,
+                            }
+                            for e in result["events"]
+                        ],
                     })
 
                     # Log feedback rows so spawned events are inspectable in the UI outcome modal
@@ -109,6 +111,42 @@ class CalendarRuleWorker:
                     run_repo.update_run(run)
                     raise
 
+    def trigger_run(self, run_type: str = "MANUAL", reference_date=None) -> GeneratorRun:
+        """Execute recurring rule evaluation synchronously and log run lifecycle."""
+        started_at = datetime.now()
+        with get_db() as conn:
+            run_repo = GeneratorRunRepository(conn)
+            run = GeneratorRun(
+                generator_type=self.worker_type,
+                started_at=started_at,
+                status="RUNNING",
+                details_json=json.dumps({"run_type": run_type}),
+            )
+            run_repo.create_run(run)
+        return self._execute_run(run, run_type=run_type, reference_date=reference_date)
+
+    def trigger_run_async(self, run_type: str = "MANUAL", reference_date=None) -> GeneratorRun:
+        """Immediately record RUNNING in DB and evaluate recurring rules in a background daemon thread."""
+        started_at = datetime.now()
+        with get_db() as conn:
+            run_repo = GeneratorRunRepository(conn)
+            run = GeneratorRun(
+                generator_type=self.worker_type,
+                started_at=started_at,
+                status="RUNNING",
+                details_json=json.dumps({"run_type": run_type, "summary_message": "Evaluating calendar rules in background..."}),
+            )
+            run_repo.create_run(run)
+
+        def _bg():
+            try:
+                self._execute_run(run, run_type=run_type, reference_date=reference_date)
+            except Exception:
+                pass
+
+        threading.Thread(target=_bg, daemon=True, name=f"{self.worker_type}_async").start()
+        return run
+
 
 class EmailEventWorker:
     """Thin execution runner for Gmail perception and LLM event extraction."""
@@ -117,10 +155,9 @@ class EmailEventWorker:
         self._lock = threading.Lock()
         self.worker_type = WORKER_TYPE_EMAIL_EVENT
 
-    def trigger_run(self, run_type: str = "MANUAL", max_results: int = 25) -> GeneratorRun:
-        """Execute email perception sync and log run lifecycle."""
+    def _execute_run(self, run: GeneratorRun, run_type: str = "MANUAL", max_results: int = 25) -> GeneratorRun:
+        """Internal execution runner for email perception and receipt ingestion."""
         with self._lock:
-            started_at = datetime.now()
             with get_db() as conn:
                 repo = EventRepository(conn)
                 place_repo = PlaceRepository(conn)
@@ -146,14 +183,6 @@ class EmailEventWorker:
                     receipt_service=receipt_service,
                 )
 
-                run = GeneratorRun(
-                    generator_type=self.worker_type,
-                    started_at=started_at,
-                    status="RUNNING",
-                    details_json=json.dumps({"run_type": run_type, "max_results": max_results}),
-                )
-                run_repo.create_run(run)
-
                 try:
                     # Delegate 100% of perception & extraction to core engine
                     created_events = engine.sync_recent_emails(
@@ -176,6 +205,18 @@ class EmailEventWorker:
                             pass
                     details["summary_message"] = summary
                     details["run_type"] = run_type
+                    details["event_ids"] = [e.id for e in created_events]
+                    details["generated_events"] = [
+                        {
+                            "id": e.id,
+                            "title": e.title,
+                            "event_type": e.event_type,
+                            "scheduled_at": e.scheduled_at.isoformat() if e.scheduled_at else None,
+                            "deadline": e.deadline.isoformat() if e.deadline else None,
+                            "notes": e.notes,
+                        }
+                        for e in created_events
+                    ]
                     run.details_json = json.dumps(details)
                     run_repo.update_run(run)
                     logger.info("EmailEventWorker completed: %s", summary)
@@ -190,6 +231,42 @@ class EmailEventWorker:
                     run_repo.update_run(run)
                     raise
 
+    def trigger_run(self, run_type: str = "MANUAL", max_results: int = 25) -> GeneratorRun:
+        """Execute email perception sync synchronously and log run lifecycle."""
+        started_at = datetime.now()
+        with get_db() as conn:
+            run_repo = GeneratorRunRepository(conn)
+            run = GeneratorRun(
+                generator_type=self.worker_type,
+                started_at=started_at,
+                status="RUNNING",
+                details_json=json.dumps({"run_type": run_type, "max_results": max_results}),
+            )
+            run_repo.create_run(run)
+        return self._execute_run(run, run_type=run_type, max_results=max_results)
+
+    def trigger_run_async(self, run_type: str = "MANUAL", max_results: int = 25) -> GeneratorRun:
+        """Immediately record RUNNING in DB and execute email sync in a background daemon thread."""
+        started_at = datetime.now()
+        with get_db() as conn:
+            run_repo = GeneratorRunRepository(conn)
+            run = GeneratorRun(
+                generator_type=self.worker_type,
+                started_at=started_at,
+                status="RUNNING",
+                details_json=json.dumps({"run_type": run_type, "max_results": max_results, "summary_message": "Scanning emails and extracting events in background..."}),
+            )
+            run_repo.create_run(run)
+
+        def _bg():
+            try:
+                self._execute_run(run, run_type=run_type, max_results=max_results)
+            except Exception:
+                pass
+
+        threading.Thread(target=_bg, daemon=True, name=f"{self.worker_type}_async").start()
+        return run
+
 
 class FacilityClosureWorker:
     """Thin execution runner for facility closure verification and conflict synchronization."""
@@ -198,10 +275,9 @@ class FacilityClosureWorker:
         self._lock = threading.Lock()
         self.worker_type = WORKER_TYPE_FACILITY_CLOSURE
 
-    def trigger_run(self, run_type: str = "MANUAL") -> GeneratorRun:
-        """Execute facility closure verification and calendar conflict synchronization."""
+    def _execute_run(self, run: GeneratorRun, run_type: str = "MANUAL") -> GeneratorRun:
+        """Internal execution runner for facility verification."""
         with self._lock:
-            started_at = datetime.now()
             with get_db() as conn:
                 repo = EventRepository(conn)
                 place_repo = PlaceRepository(conn)
@@ -212,14 +288,6 @@ class FacilityClosureWorker:
                     place_repo=place_repo,
                 )
                 run_repo = GeneratorRunRepository(conn)
-
-                run = GeneratorRun(
-                    generator_type=self.worker_type,
-                    started_at=started_at,
-                    status="RUNNING",
-                    details_json=json.dumps({"run_type": run_type}),
-                )
-                run_repo.create_run(run)
 
                 try:
                     # Delegate 100% of closure check & conflict sync to core engine
@@ -232,8 +300,10 @@ class FacilityClosureWorker:
                     run.details_json = json.dumps({
                         "run_type": run_type,
                         "summary_message": result["summary_message"],
-                        "closures_count": result["scanned_count"],
+                        "closures_count": len(result.get("closures", [])),
                         "conflicts_count": result["created_count"],
+                        "warm_pool_schedule": result.get("warm_pool_schedule"),
+                        "api_status": result.get("api_status"),
                     })
                     run_repo.update_run(run)
                     logger.info("FacilityClosureWorker completed: %s", result["summary_message"])
@@ -248,6 +318,42 @@ class FacilityClosureWorker:
                     run_repo.update_run(run)
                     raise
 
+    def trigger_run(self, run_type: str = "MANUAL") -> GeneratorRun:
+        """Execute facility closure verification synchronously and log run lifecycle."""
+        started_at = datetime.now()
+        with get_db() as conn:
+            run_repo = GeneratorRunRepository(conn)
+            run = GeneratorRun(
+                generator_type=self.worker_type,
+                started_at=started_at,
+                status="RUNNING",
+                details_json=json.dumps({"run_type": run_type}),
+            )
+            run_repo.create_run(run)
+        return self._execute_run(run, run_type=run_type)
+
+    def trigger_run_async(self, run_type: str = "MANUAL") -> GeneratorRun:
+        """Immediately record RUNNING in DB and execute facility verification in background daemon thread."""
+        started_at = datetime.now()
+        with get_db() as conn:
+            run_repo = GeneratorRunRepository(conn)
+            run = GeneratorRun(
+                generator_type=self.worker_type,
+                started_at=started_at,
+                status="RUNNING",
+                details_json=json.dumps({"run_type": run_type, "summary_message": "Verifying facility closures & schedules in background..."}),
+            )
+            run_repo.create_run(run)
+
+        def _bg():
+            try:
+                self._execute_run(run, run_type=run_type)
+            except Exception:
+                pass
+
+        threading.Thread(target=_bg, daemon=True, name=f"{self.worker_type}_async").start()
+        return run
+
 
 class InventoryDepletionWorker:
     """Thin execution runner for pantry depletion evaluation and runway restock suggestions."""
@@ -256,22 +362,13 @@ class InventoryDepletionWorker:
         self._lock = threading.Lock()
         self.worker_type = WORKER_TYPE_INVENTORY_DEPLETION
 
-    def trigger_run(self, run_type: str = "MANUAL", threshold_days: float = 7.0) -> GeneratorRun:
-        """Execute pantry burn-rate calculation and stock runway evaluation."""
+    def _execute_run(self, run: GeneratorRun, run_type: str = "MANUAL", threshold_days: float = 7.0) -> GeneratorRun:
+        """Internal execution runner for pantry depletion."""
         with self._lock:
-            started_at = datetime.now()
             with get_db() as conn:
                 inv_repo = InventoryRepository(conn)
                 inv_service = InventoryService(inv_repo)
                 run_repo = GeneratorRunRepository(conn)
-
-                run = GeneratorRun(
-                    generator_type=self.worker_type,
-                    started_at=started_at,
-                    status="RUNNING",
-                    details_json=json.dumps({"run_type": run_type, "threshold_days": threshold_days}),
-                )
-                run_repo.create_run(run)
 
                 try:
                     # Delegate 100% of burn-rate & runway math to core engine
@@ -298,6 +395,42 @@ class InventoryDepletionWorker:
                     run.details_json = json.dumps({"run_type": run_type, "summary_message": f"Depletion scan failed: {exc}"})
                     run_repo.update_run(run)
                     raise
+
+    def trigger_run(self, run_type: str = "MANUAL", threshold_days: float = 7.0) -> GeneratorRun:
+        """Execute pantry burn-rate calculation synchronously and log run lifecycle."""
+        started_at = datetime.now()
+        with get_db() as conn:
+            run_repo = GeneratorRunRepository(conn)
+            run = GeneratorRun(
+                generator_type=self.worker_type,
+                started_at=started_at,
+                status="RUNNING",
+                details_json=json.dumps({"run_type": run_type, "threshold_days": threshold_days}),
+            )
+            run_repo.create_run(run)
+        return self._execute_run(run, run_type=run_type, threshold_days=threshold_days)
+
+    def trigger_run_async(self, run_type: str = "MANUAL", threshold_days: float = 7.0) -> GeneratorRun:
+        """Immediately record RUNNING in DB and execute depletion evaluation in background daemon thread."""
+        started_at = datetime.now()
+        with get_db() as conn:
+            run_repo = GeneratorRunRepository(conn)
+            run = GeneratorRun(
+                generator_type=self.worker_type,
+                started_at=started_at,
+                status="RUNNING",
+                details_json=json.dumps({"run_type": run_type, "threshold_days": threshold_days, "summary_message": "Calculating stock runway in background..."}),
+            )
+            run_repo.create_run(run)
+
+        def _bg():
+            try:
+                self._execute_run(run, run_type=run_type, threshold_days=threshold_days)
+            except Exception:
+                pass
+
+        threading.Thread(target=_bg, daemon=True, name=f"{self.worker_type}_async").start()
+        return run
 
 
 class MasterDailyWorker:
@@ -423,6 +556,23 @@ class MasterDailyWorker:
             "results": results,
         }
         return summary
+
+    def run_all_async(self, run_type: str = "MANUAL") -> Dict[str, Any]:
+        """Trigger master daily pipeline asynchronously across all 4 sub-workers."""
+        threading.Thread(
+            target=self.run_all,
+            kwargs={"run_type": run_type},
+            daemon=True,
+            name="MasterDailyWorker_all_async",
+        ).start()
+        return {
+            "status": "RUNNING",
+            "message": "Master daily pipeline started in background across all 4 workers.",
+            "run_type": run_type,
+            "success": True,
+            "failed_stages": [],
+            "results": {},
+        }
 
     def retry_failed(self) -> Dict[str, Any]:
         """Inspect latest run for each worker and retry only the workers that failed."""

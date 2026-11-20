@@ -243,11 +243,16 @@ export const EventCard: React.FC<EventCardProps> = ({
       <Collapse in={isExpanded}>
         <Stack gap={4} mt={8} pt={6} style={{ borderTop: '1px dashed var(--mantine-color-gray-2)' }}>
           {/* Location */}
-          {event.place_name && (
+          {(event.place_name || event.place?.name) && (
             <Group gap={4} wrap="nowrap">
               <IconMapPin size={13} color="#868e96" style={{ flexShrink: 0 }} />
               <Text size="xs" c="dark.3">
-                {event.place_name}
+                {event.place_name || event.place?.name}
+                {event.studio && (
+                  <Text span fw={600} c="blue.7" ml={4}>
+                    • {event.studio}
+                  </Text>
+                )}
               </Text>
             </Group>
           )}

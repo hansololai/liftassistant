@@ -95,7 +95,9 @@ class EventGeneratorService:
 
         return False
 
-    def spawn_event(self, gen: EventGenerator, reference_date: date) -> LifeEvent:
+    def spawn_event(
+        self, gen: EventGenerator, reference_date: date, run_id: Optional[str] = None
+    ) -> LifeEvent:
         """Instantiate and persist a new LifeEvent from an EventGenerator with deadline."""
         target_date = self.get_next_target_date(gen, reference_date)
 
@@ -127,6 +129,7 @@ class EventGeneratorService:
             notes=f"Auto-generated from recurring rule '{gen.title}'. {gen.notes or ''}".strip(),
             source="EVENT_GENERATOR",
             source_reference_id=gen.id,
+            generator_run_id=run_id,
         )
 
         saved_event = self.event_repo.create_event(event)
@@ -154,7 +157,7 @@ class EventGeneratorService:
         return result["events"]
 
     def evaluate_and_spawn_due_rules(
-        self, reference_date: Optional[date] = None
+        self, reference_date: Optional[date] = None, run_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Core domain calculation: evaluate active recurring rules within lead_time_days and spawn due events."""
         ref = reference_date or date.today()
@@ -163,7 +166,7 @@ class EventGeneratorService:
 
         for gen in generators:
             if self.should_generate(gen, ref):
-                event = self.spawn_event(gen, ref)
+                event = self.spawn_event(gen, ref, run_id=run_id)
                 spawned.append(event)
 
         if spawned:

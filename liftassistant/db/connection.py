@@ -47,7 +47,7 @@ class BaseConnectionPool(ABC):
 class SQLiteConnectionPool(BaseConnectionPool):
     """Thread-safe SQLite connection pool with pre-warmed WAL mode connections."""
 
-    def __init__(self, db_path: Path, max_connections: int = 5, timeout: float = 30.0):
+    def __init__(self, db_path: Path, max_connections: int = 25, timeout: float = 30.0):
         self.db_path = db_path.resolve()
         self.max_connections = max_connections
         self.timeout = timeout
@@ -139,7 +139,7 @@ _pools: Dict[Path, SQLiteConnectionPool] = {}
 _pools_lock = threading.Lock()
 
 
-def get_connection_pool(db_path: Optional[Path] = None, max_connections: int = 5) -> BaseConnectionPool:
+def get_connection_pool(db_path: Optional[Path] = None, max_connections: int = 25) -> BaseConnectionPool:
     """Retrieve or create a live connection pool for the given target database."""
     target_path = (db_path or get_db_path()).resolve()
     with _pools_lock:
@@ -188,10 +188,10 @@ def init_db(db_path: Optional[Path] = None, schema_path: Optional[Path] = None) 
 
     with get_db(db_path) as conn:
         conn.executescript(schema_sql)
-        # Idempotent migration for latitude and longitude columns
-        for col in ["latitude", "longitude"]:
+        # Idempotent migration for latitude, longitude, and studio columns
+        for col, col_type in [("latitude", "REAL"), ("longitude", "REAL"), ("studio", "TEXT")]:
             try:
-                conn.execute(f"ALTER TABLE events ADD COLUMN {col} REAL")
+                conn.execute(f"ALTER TABLE events ADD COLUMN {col} {col_type}")
             except sqlite3.OperationalError:
                 pass
 

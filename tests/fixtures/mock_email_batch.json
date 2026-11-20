@@ -1,0 +1,47 @@
+[
+  {
+    "id": "msg_godaddy_renew",
+    "subject": "Urgent: Your domains cancel in 5 days.",
+    "from": "GoDaddy Renewals <renewals@godaddy.com>",
+    "date": "Sat, 21 Feb 2026 16:54:51 +0000",
+    "snippet": "Don't dawdle. Renew today.",
+    "body": "Your domain example.com is expiring soon.",
+    "attachments": []
+  },
+  {
+    "id": "msg_procare_receipt_01",
+    "subject": "Payment Receipt",
+    "from": "Procare <connect-notification@online.procaresoftware.com>",
+    "date": "Sat, 21 Feb 2026 02:44:17 +0000 (UTC)",
+    "snippet": "Hello, Online payment of $200.00 was successfully processed on your account. You can view all your transactions online from Procare's Parent Portal.",
+    "body": "Payment of $200.00 received for tuition. Thank you for your payment.",
+    "attachments": []
+  },
+  {
+    "id": "msg_lowes_workshop_01",
+    "subject": "Reminder! The Kids Workshop is tomorrow",
+    "from": "Lowe's Home Improvement <lowes@e.lowes.com>",
+    "date": "Fri, 20 Feb 2026 17:05:03 -0600",
+    "snippet": "Pack your aprons and goggles. We'll see you soon. Kids Workshop | Birdhouse Submission tomorrow at 10:00 AM.",
+    "body": "Reminder: Kids Workshop at Lowe's Cranberry Twp tomorrow from 10:00 AM to 1:00 PM.",
+    "attachments": []
+  },
+  {
+    "id": "msg_primrose_invoice_01",
+    "subject": "Invoice: 20-Feb-2026",
+    "from": "Primrose School of Wexford <connect-notification@online.procaresoftware.com>",
+    "date": "Fri, 20 Feb 2026 17:55:50 +0000 (UTC)",
+    "snippet": "Hello Parent, Primrose School of Wexford has requested a payment of $200, due by February 20, 2026. You can easily and securely pay this online.",
+    "body": "Tuition invoice for $200 due on February 20, 2026.",
+    "attachments": []
+  },
+  {
+    "id": "msg_marketing_newsletter_01",
+    "subject": "Back by Demand: Our Most Popular Picks",
+    "from": "Tech Deals <deals@news.example.com>",
+    "date": "Sat, 21 Feb 2026 14:10:36 +0000",
+    "snippet": "Customer-approved favorites that you'll love.",
+    "body": "Shop the latest electronics on sale.",
+    "attachments": []
+  }
+]

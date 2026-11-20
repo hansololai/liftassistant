@@ -194,8 +194,8 @@ class TestPhase3CASAndWorker(unittest.TestCase):
 
     def test_costco_json_file_parsing(self):
         """Verify that ReceiptParser parses official Costco digital receipt JSON exports."""
-        json_file = Path("data") / "costco-receipts-09-30-2026-10-02-2026.json"
-        self.assertTrue(json_file.exists(), "Costco JSON sample receipt file must exist")
+        json_file = Path("tests/fixtures/mock_costco_receipt.json")
+        self.assertTrue(json_file.exists(), "Costco JSON mock receipt file must exist")
 
         receipt = self.parser.parse_from_file(json_file)
 
@@ -233,7 +233,7 @@ class TestPhase3CASAndWorker(unittest.TestCase):
 
     def test_costco_json_worker_pipeline_integration(self):
         """End-to-end integration: store Costco JSON in CAS, process with ReceiptWorker, and update pantry."""
-        json_file = Path("data") / "costco-receipts-09-30-2026-10-02-2026.json"
+        json_file = Path("tests/fixtures/mock_costco_receipt.json")
         self.assertTrue(json_file.exists())
 
         raw_bytes = json_file.read_bytes()
@@ -284,7 +284,7 @@ class TestPhase3CASAndWorker(unittest.TestCase):
     def test_bundled_costco_receipts_deduplication(self):
         """Verify that bundled JSON receipts in one file are all imported and deduplicated by barcode."""
         import json
-        json_file = Path("data") / "costco-receipts-09-30-2026-10-02-2026.json"
+        json_file = Path("tests/fixtures/mock_costco_receipt.json")
         raw_receipts = json.loads(json_file.read_text(encoding="utf-8"))
         base_r = raw_receipts[0]
 

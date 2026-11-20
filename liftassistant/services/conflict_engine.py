@@ -83,15 +83,28 @@ class ConflictEngine:
                         resource_name=name_hint,
                     )
                     for cl in closures:
+                        cl_text = f"{cl.resource_name} {cl.reason or ''}".lower()
+                        is_studio_specific = any(kw in cl_text for kw in ["warm water", "warm pool", "lap pool"])
+                        if is_studio_specific:
+                            evt_text = f"{evt.title} {evt.notes or ''}".lower()
+                            is_aquatic = any(kw in evt_text for kw in AQUATIC_KEYWORDS)
+                            if not is_aquatic:
+                                # Event at YMCA is not aquatic (e.g. Weights, Basketball), so don't flag pool closure
+                                continue
+                            if "warm" in cl_text and "lap" in evt_text and "warm" not in evt_text:
+                                continue
+                            if "lap" in cl_text and "warm" in evt_text and "lap" not in evt_text:
+                                continue
+
                         cfl = Conflict(
                             id=f"cfl_cls_{uuid4().hex[:6]}",
                             event_id=evt.id,
                             event_title=evt.title,
                             conflict_type="FACILITY_MUTEX",
-                            severity="CRITICAL",
-                            title=f"{cl.resource_name} Closed: {cl.reason or 'Facility Closure'}",
-                            description=f"{cl.resource_name} is closed from {cl.start_time.strftime('%Y-%m-%d %I:%M %p')} to {cl.end_time.strftime('%Y-%m-%d %I:%M %p')} ({cl.reason}).",
-                            suggested_action=f"Reschedule event outside the {cl.resource_name} closure period.",
+                            severity="HIGH" if is_studio_specific else "CRITICAL",
+                            title=f"{cl.resource_name}: {cl.reason or 'Facility Closure'}",
+                            description=f"{cl.resource_name} is reserved/closed from {cl.start_time.strftime('%Y-%m-%d %I:%M %p')} to {cl.end_time.strftime('%I:%M %p')} ({cl.reason}).",
+                            suggested_action=f"Reschedule event outside the {cl.resource_name} occupied window.",
                             status="DETECTED",
                         )
                         conflicts.append(cfl)
@@ -143,6 +156,10 @@ class ConflictEngine:
                 earliest_end = min(evt_end, w.end_time)
 
                 if latest_start < earliest_end:
+                    # Avoid duplicate conflict if already caught by Part A from DB
+                    if any(c.event_id == evt.id and (w.activity_name.lower() in c.title.lower() or w.activity_name.lower() in c.description.lower()) for c in conflicts):
+                        continue
+
                     instr_str = f" with {w.instructor}" if w.instructor else ""
                     cfl = Conflict(
                         id=f"cfl_fac_{uuid4().hex[:6]}",

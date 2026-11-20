@@ -156,9 +156,10 @@ class EventRepository:
             """
             INSERT INTO events (
                 id, title, event_type, scheduled_at, scheduled_end_at, deadline, completed_at,
-                all_day, place_id, latitude, longitude, people_involved, tax_amount, notes,
-                source, source_reference_id, has_conflict, conflict_status, conflict_reason
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                all_day, place_id, studio, latitude, longitude, people_involved, tax_amount, notes,
+                source, source_reference_id, has_conflict, conflict_status, conflict_reason,
+                generator_run_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event.id,
@@ -170,6 +171,7 @@ class EventRepository:
                 event.completed_at.isoformat() if event.completed_at else None,
                 int(event.all_day),
                 event.place_id,
+                event.studio,
                 event.latitude,
                 event.longitude,
                 people_json,
@@ -180,6 +182,7 @@ class EventRepository:
                 int(event.has_conflict),
                 event.conflict_status,
                 event.conflict_reason,
+                event.generator_run_id,
             ),
         )
 
@@ -230,6 +233,7 @@ class EventRepository:
                 deadline = ?,
                 completed_at = ?,
                 place_id = ?,
+                studio = ?,
                 latitude = ?,
                 longitude = ?,
                 people_involved = ?,
@@ -248,6 +252,7 @@ class EventRepository:
                 event.deadline.isoformat() if event.deadline else None,
                 event.completed_at.isoformat() if event.completed_at else None,
                 event.place_id,
+                event.studio,
                 event.latitude,
                 event.longitude,
                 json.dumps(event.people_involved),
@@ -342,6 +347,7 @@ class EventRepository:
             completed_at=row["completed_at"],
             all_day=bool(row["all_day"]),
             place_id=row["place_id"],
+            studio=row["studio"] if "studio" in row_keys else None,
             latitude=row["latitude"] if "latitude" in row_keys else None,
             longitude=row["longitude"] if "longitude" in row_keys else None,
             people_involved=people,
@@ -352,11 +358,36 @@ class EventRepository:
             has_conflict=bool(row["has_conflict"]),
             conflict_status=row["conflict_status"],
             conflict_reason=row["conflict_reason"],
+            generator_run_id=row["generator_run_id"] if "generator_run_id" in row_keys else None,
             place=place,
             dining_detail=dining_detail,
             shopping_detail=shopping_detail,
             maintenance_detail=maintenance_detail,
         )
+
+    def list_events_by_run_id(self, run_id: str) -> List[LifeEvent]:
+        """Fetch all LifeEvent items created during a specific generator run."""
+        cursor = self.conn.cursor()
+        rows = cursor.execute(
+            """
+            SELECT e.*,
+                   p.name AS p_name, p.category AS p_category, p.address AS p_address,
+                   p.latitude AS p_lat, p.longitude AS p_lng, p.map_url AS p_map_url,
+                   d.event_id AS d_eid, d.rating AS d_rating, d.total_amount AS d_total_amount,
+                   s.event_id AS s_eid, s.receipt_image_path AS s_img, s.pantry_updated AS s_pu, s.total_amount AS s_total_amount,
+                   m.event_id AS m_eid, m.equipment_id AS m_eq_id, m.service_type AS m_st,
+                   m.next_due_interval_days AS m_ndd, m.next_due_miles AS m_ndm
+            FROM events e
+            LEFT JOIN places p ON e.place_id = p.id
+            LEFT JOIN dining_details d ON e.id = d.event_id AND e.event_type = d.event_type
+            LEFT JOIN shopping_details s ON e.id = s.event_id AND e.event_type = s.event_type
+            LEFT JOIN maintenance_details m ON e.id = m.event_id AND e.event_type = m.event_type
+            WHERE e.generator_run_id = ?
+            ORDER BY COALESCE(e.scheduled_at, e.created_at) DESC
+            """,
+            (run_id,),
+        ).fetchall()
+        return [self._map_row_to_event(r) for r in rows]
 
 
 class InventoryRepository:
@@ -974,6 +1005,31 @@ class PlaceRepository:
         self.conn.commit()
         return closure
 
+    def sync_facility_api_closures(self, closures: List[ResourceClosure]) -> int:
+        """Batch insert/replace facility API closures into resource_closures table."""
+        cursor = self.conn.cursor()
+        saved = 0
+        for closure in closures:
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO resource_closures (id, resource_id, resource_name, start_time, end_time, reason, source, source_reference_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    closure.id,
+                    closure.resource_id,
+                    closure.resource_name,
+                    closure.start_time.isoformat() if isinstance(closure.start_time, datetime) else str(closure.start_time),
+                    closure.end_time.isoformat() if isinstance(closure.end_time, datetime) else str(closure.end_time),
+                    closure.reason,
+                    closure.source or "FACILITY_API",
+                    closure.source_reference_id,
+                ),
+            )
+            saved += 1
+        self.conn.commit()
+        return saved
+
     def list_closures(self, resource_id: Optional[str] = None) -> List[ResourceClosure]:
         """Fetch all resource closures, optionally filtered by resource_id."""
         cursor = self.conn.cursor()
@@ -1014,6 +1070,13 @@ class PlaceRepository:
 
         rows = cursor.execute(query, tuple(params)).fetchall()
         return [self._map_row_to_closure(r) for r in rows]
+
+    def delete_closure(self, closure_id: str) -> bool:
+        """Delete a resource closure by ID."""
+        cursor = self.conn.cursor()
+        cursor.execute("DELETE FROM resource_closures WHERE id = ?", (closure_id,))
+        self.conn.commit()
+        return cursor.rowcount > 0
 
     @staticmethod
     def _map_row_to_closure(row: Any) -> ResourceClosure:
@@ -1124,12 +1187,23 @@ class GeneratorRunRepository:
         cursor = self.conn.cursor()
         rows = cursor.execute(
             """
-            SELECT fb.*, e.title AS event_title, e.event_type AS event_type, e.scheduled_at, e.deadline,
-                   COALESCE(sd.total_amount, dd.total_amount, 0.0) AS total_amount
+            SELECT fb.*,
+                   COALESCE(e.title, rc.reason, fb.email_subject) AS event_title,
+                   COALESCE(e.event_type, CASE WHEN fb.event_id LIKE 'cls_%' OR fb.llm_category = 'FACILITY_CLOSURE' THEN 'FACILITY_CLOSURE' ELSE 'CUSTOM' END) AS event_type,
+                   COALESCE(e.scheduled_at, rc.start_time) AS scheduled_at,
+                   COALESCE(e.deadline, rc.end_time) AS deadline,
+                   COALESCE(sd.total_amount, dd.total_amount, 0.0) AS total_amount,
+                   rc.resource_name AS closure_facility_name,
+                   rc.start_time AS closure_start,
+                   rc.end_time AS closure_end,
+                   rc.reason AS closure_reason,
+                   pl.address AS closure_facility_address
             FROM generator_event_feedback fb
             LEFT JOIN events e ON fb.event_id = e.id
             LEFT JOIN shopping_details sd ON e.id = sd.event_id
             LEFT JOIN dining_details dd ON e.id = dd.event_id
+            LEFT JOIN resource_closures rc ON fb.event_id = rc.id
+            LEFT JOIN places pl ON rc.resource_id = pl.id
             WHERE fb.run_id = ?
             ORDER BY fb.created_at DESC
             """,
@@ -1154,31 +1228,52 @@ class GeneratorRunRepository:
     def create_or_update_feedback(self, feedback: GeneratorEventFeedback) -> GeneratorEventFeedback:
         cursor = self.conn.cursor()
         existing = None
-        if feedback.event_id:
+
+        target_event_id = feedback.event_id
+        if feedback.user_status in ("SKIPPED",) or feedback.llm_category in ("SKIP", "PROMOTION"):
+            target_event_id = None
+
+        # Check existing feedback strictly within the SAME worker run.
+        # This guarantees subsequent runs insert new feedback linked to their own run_id
+        # instead of overwriting/mutating historical feedback from previous runs!
+        if feedback.run_id:
+            if feedback.id:
+                existing = cursor.execute(
+                    "SELECT id, user_correction_reason FROM generator_event_feedback WHERE id = ? AND run_id = ?",
+                    (feedback.id, feedback.run_id),
+                ).fetchone()
+            if not existing and target_event_id:
+                existing = cursor.execute(
+                    "SELECT id, user_correction_reason FROM generator_event_feedback WHERE run_id = ? AND event_id = ?",
+                    (feedback.run_id, target_event_id),
+                ).fetchone()
+            if not existing and feedback.source_reference_id:
+                existing = cursor.execute(
+                    "SELECT id, user_correction_reason FROM generator_event_feedback WHERE run_id = ? AND source_reference_id = ?",
+                    (feedback.run_id, feedback.source_reference_id),
+                ).fetchone()
+        elif feedback.id:
             existing = cursor.execute(
-                "SELECT id FROM generator_event_feedback WHERE event_id = ?", (feedback.event_id,)
-            ).fetchone()
-        elif feedback.source_reference_id:
-            existing = cursor.execute(
-                "SELECT id FROM generator_event_feedback WHERE source_reference_id = ?", (feedback.source_reference_id,)
+                "SELECT id, user_correction_reason FROM generator_event_feedback WHERE id = ?",
+                (feedback.id,),
             ).fetchone()
 
         if existing:
             cursor.execute(
                 """
                 UPDATE generator_event_feedback
-                SET event_id = COALESCE(?, event_id),
+                SET event_id = ?,
                     run_id = COALESCE(?, run_id),
                     llm_category = ?,
                     llm_reason = ?,
                     raw_json = ?,
                     user_status = ?,
-                    user_correction_reason = ?,
+                    user_correction_reason = COALESCE(?, user_correction_reason),
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
                 (
-                    feedback.event_id,
+                    target_event_id,
                     feedback.run_id,
                     feedback.llm_category,
                     feedback.llm_reason,
@@ -1189,7 +1284,11 @@ class GeneratorRunRepository:
                 ),
             )
             feedback.id = existing["id"]
+            feedback.event_id = target_event_id
         else:
+            feedback_id = feedback.id or f"fb_{uuid4().hex[:8]}"
+            feedback.id = feedback_id
+            feedback.event_id = target_event_id
             cursor.execute(
                 """
                 INSERT INTO generator_event_feedback (
@@ -1219,12 +1318,23 @@ class GeneratorRunRepository:
         cursor = self.conn.cursor()
         row = cursor.execute(
             """
-            SELECT fb.*, e.title AS event_title, e.event_type AS event_type, e.scheduled_at, e.deadline,
-                   COALESCE(sd.total_amount, dd.total_amount, 0.0) AS total_amount
+            SELECT fb.*,
+                   COALESCE(e.title, rc.reason, fb.email_subject) AS event_title,
+                   COALESCE(e.event_type, CASE WHEN fb.event_id LIKE 'cls_%' OR fb.llm_category = 'FACILITY_CLOSURE' THEN 'FACILITY_CLOSURE' ELSE 'CUSTOM' END) AS event_type,
+                   COALESCE(e.scheduled_at, rc.start_time) AS scheduled_at,
+                   COALESCE(e.deadline, rc.end_time) AS deadline,
+                   COALESCE(sd.total_amount, dd.total_amount, 0.0) AS total_amount,
+                   rc.resource_name AS closure_facility_name,
+                   rc.start_time AS closure_start,
+                   rc.end_time AS closure_end,
+                   rc.reason AS closure_reason,
+                   pl.address AS closure_facility_address
             FROM generator_event_feedback fb
             LEFT JOIN events e ON fb.event_id = e.id
             LEFT JOIN shopping_details sd ON e.id = sd.event_id
             LEFT JOIN dining_details dd ON e.id = dd.event_id
+            LEFT JOIN resource_closures rc ON fb.event_id = rc.id
+            LEFT JOIN places pl ON rc.resource_id = pl.id
             WHERE fb.event_id = ?
             """,
             (event_id,),
@@ -1235,12 +1345,29 @@ class GeneratorRunRepository:
         cursor = self.conn.cursor()
         rows = cursor.execute(
             """
-            SELECT fb.*, e.title AS event_title, e.event_type AS event_type, e.scheduled_at, e.deadline,
-                   COALESCE(sd.total_amount, dd.total_amount, 0.0) AS total_amount
+            SELECT fb.*,
+                   COALESCE(e.title, rc.reason, fb.email_subject) AS event_title,
+                   COALESCE(e.event_type, CASE WHEN fb.event_id LIKE 'cls_%' OR fb.llm_category = 'FACILITY_CLOSURE' THEN 'FACILITY_CLOSURE' ELSE 'CUSTOM' END) AS event_type,
+                   COALESCE(e.scheduled_at, rc.start_time) AS scheduled_at,
+                   COALESCE(e.deadline, rc.end_time) AS deadline,
+                   COALESCE(sd.total_amount, dd.total_amount, 0.0) AS total_amount,
+                   rc.resource_name AS closure_facility_name,
+                   rc.start_time AS closure_start,
+                   rc.end_time AS closure_end,
+                   rc.reason AS closure_reason,
+                   pl.address AS closure_facility_address
             FROM generator_event_feedback fb
             LEFT JOIN events e ON fb.event_id = e.id
             LEFT JOIN shopping_details sd ON e.id = sd.event_id
             LEFT JOIN dining_details dd ON e.id = dd.event_id
+            LEFT JOIN resource_closures rc ON fb.event_id = rc.id
+            LEFT JOIN places pl ON rc.resource_id = pl.id
+            WHERE fb.id IN (
+                SELECT f2.id
+                FROM generator_event_feedback f2
+                GROUP BY COALESCE(f2.source_reference_id, f2.id)
+                HAVING f2.updated_at = MAX(f2.updated_at)
+            )
             ORDER BY fb.created_at DESC
             LIMIT ?
             """,
@@ -1249,19 +1376,56 @@ class GeneratorRunRepository:
         return [self._map_row_to_feedback(r) for r in rows]
 
     def update_feedback_status(
-        self, event_id: str, status: str, user_reason: Optional[str] = None
+        self,
+        event_id: str,
+        status: str,
+        user_reason: Optional[str] = None,
+        append_reason: bool = True,
+        feedback_id: Optional[str] = None,
+        run_id: Optional[str] = None,
     ) -> Optional[GeneratorEventFeedback]:
         cursor = self.conn.cursor()
-        cursor.execute(
-            """
-            UPDATE generator_event_feedback
-            SET user_status = ?,
-                user_correction_reason = COALESCE(?, user_correction_reason),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE event_id = ?
-            """,
-            (status, user_reason, event_id),
-        )
+
+        # Locate target feedback row(s) to update/append
+        if feedback_id:
+            rows = cursor.execute(
+                "SELECT id, user_correction_reason FROM generator_event_feedback WHERE id = ?",
+                (feedback_id,),
+            ).fetchall()
+        elif run_id:
+            rows = cursor.execute(
+                "SELECT id, user_correction_reason FROM generator_event_feedback WHERE run_id = ? AND (event_id = ? OR source_reference_id = ?)",
+                (run_id, event_id, event_id),
+            ).fetchall()
+            if not rows:
+                rows = cursor.execute(
+                    "SELECT id, user_correction_reason FROM generator_event_feedback WHERE event_id = ? OR source_reference_id = ?",
+                    (event_id, event_id),
+                ).fetchall()
+        else:
+            rows = cursor.execute(
+                "SELECT id, user_correction_reason FROM generator_event_feedback WHERE event_id = ? OR source_reference_id = ?",
+                (event_id, event_id),
+            ).fetchall()
+
+        for r in rows:
+            existing_reason = r["user_correction_reason"]
+            final_reason = user_reason
+            if append_reason and existing_reason and user_reason and user_reason not in existing_reason:
+                final_reason = f"{existing_reason} | {user_reason}"
+            elif not final_reason:
+                final_reason = existing_reason
+
+            cursor.execute(
+                """
+                UPDATE generator_event_feedback
+                SET user_status = ?,
+                    user_correction_reason = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (status, final_reason, r["id"]),
+            )
         self.conn.commit()
         return self.get_feedback_by_event(event_id)
 
@@ -1342,6 +1506,39 @@ class GeneratorRunRepository:
         if "deadline" in row_keys and row["deadline"]:
             due_dt = datetime.fromisoformat(row["deadline"]) if isinstance(row["deadline"], str) else row["deadline"]
 
+        cl_start = None
+        if "closure_start" in row_keys and row["closure_start"]:
+            cl_start = datetime.fromisoformat(row["closure_start"]) if isinstance(row["closure_start"], str) else row["closure_start"]
+
+        cl_end = None
+        if "closure_end" in row_keys and row["closure_end"]:
+            cl_end = datetime.fromisoformat(row["closure_end"]) if isinstance(row["closure_end"], str) else row["closure_end"]
+
+        cl_name = row["closure_facility_name"] if "closure_facility_name" in row_keys else None
+        cl_reason = row["closure_reason"] if "closure_reason" in row_keys else None
+        cl_address = row["closure_facility_address"] if "closure_facility_address" in row_keys else None
+
+        # Fallback to parsing raw_json if closure fields are empty
+        if not cl_name and row["raw_json"]:
+            try:
+                parsed = json.loads(row["raw_json"])
+                is_closure = parsed.get("category") in ["FACILITY_CLOSURE", "CLOSURE"] or (row["event_id"] and str(row["event_id"]).startswith("cls_"))
+                if is_closure:
+                    cl_name = parsed.get("facility_name") or parsed.get("merchant_name")
+                    cl_reason = parsed.get("reason") or parsed.get("event_title")
+                    if parsed.get("closure_start") and not cl_start:
+                        try:
+                            cl_start = datetime.fromisoformat(parsed["closure_start"])
+                        except Exception:
+                            pass
+                    if parsed.get("closure_end") and not cl_end:
+                        try:
+                            cl_end = datetime.fromisoformat(parsed["closure_end"])
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
         return GeneratorEventFeedback(
             id=row["id"],
             event_id=row["event_id"],
@@ -1362,6 +1559,11 @@ class GeneratorRunRepository:
             total_amount=float(row["total_amount"]) if "total_amount" in row_keys and row["total_amount"] is not None else 0.0,
             scheduled_at=sched_dt,
             deadline=due_dt,
+            closure_facility_name=cl_name,
+            closure_start=cl_start,
+            closure_end=cl_end,
+            closure_reason=cl_reason,
+            closure_facility_address=cl_address,
         )
 
     @staticmethod

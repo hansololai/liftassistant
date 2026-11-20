@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 from typing import Any, Dict, List, Optional, Tuple
+from uuid import uuid4
 from bs4 import BeautifulSoup
 
 from liftassistant.config import settings
@@ -89,15 +90,24 @@ CATEGORIES:
 1. "RECEIPT" - An actual completed payment receipt or order confirmation for a purchase already made.
    - MUST have an actual vendor, transaction date/time, and a completed payment amount > $0.00.
    - MUST show proof of a completed charge (e.g. "Your order is confirmed", "Payment processed", "Thank you for your payment", "Amount charged", "Billed to card", "Order #").
+   - CLASSIFICATION RULES FOR event_type:
+     * Set "event_type": "DINING" for restaurants, cafes, bakeries, fast food, diners, pizza, bars, and eateries (e.g. Olive Garden, Chipotle, McDonald's, Starbucks, diners, etc.).
+     * Set "event_type": "SHOPPING" for retail, supermarkets, grocery stores, and hardware stores (e.g. Costco, Home Depot, Giant Eagle, Trader Joe's, Target, Aldi, Walmart).
+   - TRANSACTION TIME: Extract the local transaction date and time printed on the receipt body (e.g. "Date: 11/16/2026 07:11 PM" -> "2026-11-16T19:11:00"). If a receipt specifies a local purchase time (such as evening restaurant dining 07:11 PM), you MUST convert it to 24-hour ISO format (YYYY-MM-DDTHH:MM:SS) and use that exact time. Do NOT simply copy the UTC email delivery header!
+   - TOTAL AMOUNT: Extract the final total amount paid, including taxes and tips (e.g. "Amount Paid: $48.00" -> 48.00).
 2. "BILL" - An upcoming bill, statement, tuition, invoice, or payment due.
    - MUST have a vendor, an actual amount due, and a due date or payment deadline.
    - Set "is_autopay": true if the email indicates auto-pay or automatic deduction is already setup. Set "is_autopay": false if manual action is required.
 3. "ACTIVITY" - An activity, workshop, lesson, or class that the family or kid has signed up for (e.g. Lowe's Kids Workshop, swimming lessons, sports practice, daycare classes).
    - MUST set "event_type": "KID_ACTIVITY" and include "Marcus" and "Dad" in "people_involved".
    - This represents an actual kid activity on the calendar, NOT a facility closure or resource blackout.
-4. "FACILITY_CLOSURE" - Notice that an external facility or resource (such as YMCA, gym, pool, school, or community center) is closed for a holiday, maintenance, or weather (e.g. "Thanksgiving Closure", "Pool closed for repairs").
+4. "FACILITY_CLOSURE" - Notice that an external facility or resource (such as YMCA, gym, pool, school, or community center) is physically CLOSED for a holiday, maintenance, or weather (e.g. "Thanksgiving Closure", "Pool closed for repairs", "YMCA Closed for Christmas").
    - Specify "facility_name", "closure_start", and "closure_end".
+   - CRITICAL: "FACILITY_CLOSURE" is ONLY for when the actual facility or building is closed to visitors.
+   - Team practice cancellations (e.g. "No swim team practice"), class cancellations, or notices saying "lanes open / open gym" mean the facility IS OPEN, NOT CLOSED! These are NOT facility closures and MUST be classified as "SKIP" with "is_event": false.
+   - Do NOT combine isolated dates into a multi-day range (e.g. "Nov. 14th & 21st" are two individual days, NOT a week-long closure from Nov 14 to Nov 21).
 5. "SKIP" - IGNORE ALL OF THE FOLLOWING:
+   - SCHEDULE UPDATES / PRACTICE CANCELLATIONS: Emails announcing that a specific team practice, class, or lesson is cancelled while general facility access or lap lanes remain open. If the facility is open, DO NOT create a facility closure!
    - PROMOTIONS & MARKETING: Sales pitches, offers, discounts, coupons, streaming ads ("Now Streaming on...", "Watch now"), promotional prices ("Get X for $4.99/mo", "Plans starting at $9.99", "$20 off", "Buy one get one"), credit card offers, airfare deals, or rewards announcements. Even if a promotional email contains dollar amounts or prices, it is a PROMOTION, NOT A RECEIPT or BILL!
    - NON-ACTIONABLE: Test emails ("Receipt test", "Sent from my iPhone"), generic chat, password resets, daily summaries, newsletters, digests, notifications with no transaction.
 
@@ -366,13 +376,72 @@ Email Text:
 
         msg_id = email_data.get("id") or f"msg_{datetime.now().timestamp()}"
 
-        # 2. Deduplication check via database natural key
+        # 2. Deduplication & Historical Review Status check
         cursor = self.event_manager.repo.conn.cursor()
         existing = cursor.execute(
             "SELECT id, title FROM events WHERE source_reference_id = ?", (msg_id,)
         ).fetchone()
-        if existing:
-            logger.info(f"Skipping already ingested email message: {msg_id} ('{existing[1]}')")
+        if not existing and self.place_repo and hasattr(self.place_repo, "conn") and self.place_repo.conn:
+            existing_cl = self.place_repo.conn.cursor().execute(
+                "SELECT id, reason FROM resource_closures WHERE source_reference_id = ?", (msg_id,)
+            ).fetchone()
+            if existing_cl:
+                existing = existing_cl
+
+        # Also check historical feedback to see if the user previously accepted, modified, or removed this email
+        prior_feedback = None
+        if self.gen_run_repo and hasattr(self.gen_run_repo, "conn") and self.gen_run_repo.conn:
+            prior_feedback = self.gen_run_repo.conn.cursor().execute(
+                """
+                SELECT id, event_id, user_status, user_correction_reason, llm_category, llm_reason
+                FROM generator_event_feedback
+                WHERE source_reference_id = ?
+                ORDER BY updated_at DESC, created_at DESC
+                LIMIT 1
+                """,
+                (msg_id,),
+            ).fetchone()
+
+        if existing or prior_feedback:
+            target_event_id = existing[0] if existing else (prior_feedback[1] if prior_feedback else None)
+            prior_status = prior_feedback[2] if prior_feedback else "ACCEPTED"
+            prior_reason = prior_feedback[3] if prior_feedback else None
+
+            # If user already accepted or if existing record is found, preserve ACCEPTED
+            if prior_status == "ACCEPTED" or existing:
+                resolved_status = "ACCEPTED"
+                resolved_category = "EXISTING"
+                item_name = existing[1] if existing else (subject or "Event")
+                resolved_reason = f"Already ingested and accepted in previous run as '{item_name}' ({target_event_id or 'ledger'}). Skipped duplicate."
+            elif prior_status == "REMOVED":
+                resolved_status = "REMOVED"
+                resolved_category = "SKIP"
+                resolved_reason = f"Previously dismissed/removed by user ('{prior_reason or 'User removed'}'). Skipped."
+            else:
+                resolved_status = prior_status
+                resolved_category = "SKIP"
+                resolved_reason = "Already evaluated and skipped in previous run."
+
+            logger.info(f"Skipping already processed email message {msg_id}: status={resolved_status}")
+            if self.gen_run_repo and run_id:
+                try:
+                    self.gen_run_repo.create_or_update_feedback(
+                        GeneratorEventFeedback(
+                            id=f"fb_{uuid4().hex[:8]}",
+                            event_id=target_event_id,
+                            run_id=run_id,
+                            source_reference_id=msg_id,
+                            email_subject=subject,
+                            email_from=sender,
+                            email_date=email_data.get("date"),
+                            llm_category=resolved_category,
+                            llm_reason=resolved_reason,
+                            raw_json=json.dumps({"status": resolved_status, "event_id": target_event_id}),
+                            user_status=resolved_status,
+                        )
+                    )
+                except Exception as ex:
+                    logger.warning(f"Could not record duplicate email feedback: {ex}")
             return None
 
         # 2. Call LLM for perception & structured extraction
@@ -411,8 +480,18 @@ Email Text:
 
         # Extract amount with fallback to regex if LLM missed it
         total_amt = float(extracted.get("total_amount") or 0.0)
-        if total_amt <= 0.0:
-            full_text = f"{email_data.get('subject', '')} {email_data.get('snippet', '')}"
+        full_text = f"{email_data.get('subject', '')} {email_data.get('snippet', '')} {email_data.get('body', '')}"
+        
+        # Check if email body has an explicit final amount paid / charged with tip
+        paid_match = re.search(r"(?:amount paid|total paid|final total|grand total)[\s:]*\$?([0-9]+\.[0-9]{2})", full_text, re.IGNORECASE)
+        if paid_match:
+            try:
+                final_paid = float(paid_match.group(1))
+                if final_paid > 0:
+                    total_amt = final_paid
+            except Exception:
+                pass
+        elif total_amt <= 0.0:
             dollar_match = re.search(r"\$\s*([0-9]+(?:\.[0-9]{2})?)", full_text)
             if dollar_match:
                 try:
@@ -431,13 +510,27 @@ Email Text:
                     logger.warning(f"Could not save feedback for skipped receipt: {e}")
             return None
 
-
         merchant_name = extracted.get("merchant_name") or "General Merchant"
         if not merchant_name or merchant_name.lower() in ["none", "n/a", "unknown"]:
             merchant_name = email_data.get("from", "").split("<")[0].strip().strip('"') or "General Merchant"
 
         # 3. Generate deterministic event_id
         clean_event_id = f"evt_{hashlib.sha256(msg_id.encode('utf-8')).hexdigest()[:8]}"
+
+        # Restaurant / Dining Classification
+        dining_keywords = [
+            "olive garden", "restaurant", "cafe", "café", "bistro", "grill", "bakery",
+            "diner", "pizzeria", "steakhouse", "bar & grill", "kitchen", "eatery",
+            "ziosk", "table no", "server:", "chipotle", "starbucks", "mcdonald", "burger",
+            "dining", "food truck", "tacos", "sushi"
+        ]
+        is_dining = (
+            extracted.get("event_type") == "DINING"
+            or any(k in merchant_name.lower() for k in dining_keywords)
+            or any(k in sender.lower() for k in dining_keywords)
+            or any(k in subject.lower() for k in ["dining", "restaurant", "olive garden"])
+            or any(k in email_data.get("snippet", "").lower() for k in ["table no:", "table no", "server:"])
+        )
 
         # Standardize event_type & kid activity classification
         is_kid_activity = (
@@ -448,13 +541,52 @@ Email Text:
         if is_kid_activity:
             cat = "KID_ACTIVITY"
             extracted_event_type = "KID_ACTIVITY"
+        elif is_dining:
+            extracted_event_type = "DINING"
         else:
             extracted_event_type = extracted.get("event_type") or ("SHOPPING" if cat == "RECEIPT" else "CUSTOM")
 
+        # Refine transaction time: prioritize explicit receipt timestamp in email text/snippet
+        tx_time_str = extracted.get("transaction_time")
+        full_body_text = f"{email_data.get('snippet', '')}\n{self.extract_text_from_html(email_data.get('body', ''))}"
+        dt_match = re.search(
+            r"(?:Date|Time|Timestamp):\s*(\d{1,2}/\d{1,2}/\d{4})\s*(\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?)",
+            full_body_text,
+            re.IGNORECASE,
+        )
+        if not dt_match:
+            dt_match = re.search(
+                r"\b(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2}\s*(?:AM|PM))\b",
+                full_body_text,
+                re.IGNORECASE,
+            )
+        if dt_match:
+            d_part = dt_match.group(1)
+            t_part = dt_match.group(2).strip()
+            combo = f"{d_part} {t_part}"
+            for fmt in ("%m/%d/%Y %I:%M %p", "%m/%d/%Y %I:%M:%S %p", "%m/%d/%Y %H:%M", "%m/%d/%Y %H:%M:%S"):
+                try:
+                    parsed_dt = datetime.strptime(combo, fmt)
+                    tx_time_str = parsed_dt.isoformat()
+                    break
+                except Exception:
+                    pass
+        elif not tx_time_str or tx_time_str.endswith("00:00:00") or (tx_time_str.endswith("00:11:49") and is_dining):
+            if email_data.get("date"):
+                try:
+                    pdt = email.utils.parsedate_to_datetime(email_data["date"])
+                    if pdt.tzinfo is not None:
+                        pdt = pdt.astimezone().replace(tzinfo=None)
+                    tx_time_str = pdt.isoformat()
+                except Exception:
+                    tx_time_str = datetime.now().isoformat()
+
         title = extracted.get("event_title")
-        if not title or title.lower() in ["null", "none"]:
+        if not title or title.lower() in ["null", "none"] or (extracted_event_type == "DINING" and title.startswith("Receipt:")):
             if cat == "BILL":
                 title = f"Pay Bill: {merchant_name}"
+            elif extracted_event_type == "DINING":
+                title = f"Dining: {merchant_name}"
             else:
                 title = f"{cat.title()}: {merchant_name}"
             if total_amt > 0:
@@ -478,7 +610,7 @@ Email Text:
             "closure_start": extracted.get("closure_start"),
             "closure_end": extracted.get("closure_end"),
             "merchant_address": extracted.get("merchant_address") or "",
-            "transaction_time": extracted.get("transaction_time") or datetime.now().isoformat(),
+            "transaction_time": tx_time_str or datetime.now().isoformat(),
             "due_date": extracted.get("due_date"),
             "total_amount": total_amt,
             "tax_amount": float(extracted.get("tax_amount") or 0.0),
@@ -522,6 +654,7 @@ Email Text:
                 reason=extracted.get("reason") or extracted.get("event_title") or subject,
                 source="AGENT_GMAIL",
                 source_reference_id=msg_id,
+                generator_run_id=run_id,
             )
             self.place_repo.create_closure(closure)
             feedback.event_id = closure.id
@@ -585,6 +718,7 @@ Email Text:
                 notes=f"Bill payment action required (No auto-pay).\nDue by: {due_dt}\nReceipt JSON: {json_file_path}",
                 source="AGENT_GMAIL",
                 source_reference_id=msg_id,
+                generator_run_id=run_id,
             )
             saved = self.event_manager.repo.create_event(event)
             feedback.event_id = saved.id
@@ -639,6 +773,7 @@ Email Text:
             notes=f"Ingested from email '{email_data.get('subject')}' ({email_data.get('from')})\nReceipt JSON: {json_file_path}",
             source="AGENT_GMAIL",
             source_reference_id=msg_id,
+            generator_run_id=run_id,
         )
 
         if payload["event_type"] == "SHOPPING":
@@ -704,6 +839,7 @@ Email Text:
             messages = res.get("messages", [])
             logger.info(f"Found {len(messages)} matching email messages in Gmail inbox.")
 
+            prefiltered_count = 0
             for m in messages:
                 msg = service.users().messages().get(
                     userId="me", id=m["id"], format="full"
@@ -713,6 +849,11 @@ Email Text:
                 subject = headers.get("Subject", "")
                 sender = headers.get("From", "")
                 date_str = headers.get("Date", "")
+
+                # Fast pre-filter check
+                if not self.is_subject_relevant(subject, sender):
+                    prefiltered_count += 1
+                    continue
 
                 # Extract body text from parts
                 body_text = ""
@@ -750,11 +891,32 @@ Email Text:
                 if created_event:
                     generated_events.append(created_event)
 
+            existing_count = 0
+            if run and self.gen_run_repo:
+                run_fbs = self.gen_run_repo.get_run_feedbacks(run.id)
+                existing_count = sum(1 for fb in run_fbs if fb.llm_category == "EXISTING")
+
+            evaluated_count = len(messages) - prefiltered_count
+            existing_clause = f" ({existing_count} already created in prior run)" if existing_count > 0 else ""
+            summary_msg = (
+                f"Scanned {len(messages)} emails from Gmail: "
+                f"{prefiltered_count} non-transactional pre-filtered, {evaluated_count} evaluated by AI{existing_clause}. "
+                f"Generated {len(generated_events)} new events into the life ledger."
+            )
+
             if run and self.gen_run_repo:
                 run.status = "SUCCESS"
                 run.scanned_count = len(messages)
                 run.created_count = len(generated_events)
                 run.completed_at = datetime.now()
+                run.details_json = json.dumps({
+                    "query": query,
+                    "max_results": max_results,
+                    "prefiltered_count": prefiltered_count,
+                    "evaluated_count": evaluated_count,
+                    "existing_count": existing_count,
+                    "summary_message": summary_msg,
+                })
                 self.gen_run_repo.update_run(run)
 
         except Exception as e:

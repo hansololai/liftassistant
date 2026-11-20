@@ -186,7 +186,7 @@ def test_facility_closure_worker(test_db_setup):
 
     assert run.status == "SUCCESS"
     assert run.generator_type == WORKER_TYPE_FACILITY_CLOSURE
-    assert run.scanned_count == 1
+    assert run.scanned_count >= 1
 
 
 def test_master_daily_worker_orchestration_and_failure_isolation(test_db_setup, monkeypatch):

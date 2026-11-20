@@ -39,6 +39,12 @@ class BaseFacilityProvider(ABC):
         """Return all occupied reservation blocks for a given date and optional studio."""
         pass
 
+    def get_studio_open_hours(
+        self, target_date: date, studio_filter: str = "Warm Water Pool"
+    ) -> Dict[str, Any]:
+        """Return opening times, occupied class windows, and open availability for a studio."""
+        return {}
+
 
 class YmcaScheduleProvider(BaseFacilityProvider):
     """Live schedule provider for YMCA facilities via GroupEx PRO API (Decision 6).
@@ -243,3 +249,65 @@ class YmcaScheduleProvider(BaseFacilityProvider):
             result.append(w)
 
         return result
+
+    # Standard operating hours for Rose E. Schneider Family YMCA
+    # Mon-Fri: 5:30 AM - 9:00 PM (Pool closes 8:45 PM)
+    # Sat: 7:00 AM - 5:00 PM (Pool closes 4:45 PM)
+    # Sun: 10:00 AM - 5:00 PM (Pool closes 4:45 PM)
+    OPERATING_HOURS = {
+        0: (time(5, 30), time(20, 45)),  # Monday
+        1: (time(5, 30), time(20, 45)),  # Tuesday
+        2: (time(5, 30), time(20, 45)),  # Wednesday
+        3: (time(5, 30), time(20, 45)),  # Thursday
+        4: (time(5, 30), time(20, 45)),  # Friday
+        5: (time(7, 0), time(16, 45)),   # Saturday
+        6: (time(10, 0), time(16, 45)),  # Sunday
+    }
+
+    def get_studio_open_hours(
+        self, target_date: date, studio_filter: str = "Warm Water Pool"
+    ) -> Dict[str, Any]:
+        """Calculates opening times, occupied class intervals, and open swimming availability for a studio."""
+        weekday = target_date.weekday()
+        open_time, close_time = self.OPERATING_HOURS.get(weekday, (time(5, 30), time(20, 45)))
+
+        occupied = self.get_occupied_windows(target_date=target_date, studio_filter=studio_filter)
+        occupied_sorted = sorted(occupied, key=lambda w: w.start_time)
+
+        # Compute open intervals within operating hours
+        open_intervals: List[Dict[str, str]] = []
+        current_dt = datetime.combine(target_date, open_time)
+        day_close_dt = datetime.combine(target_date, close_time)
+
+        for w in occupied_sorted:
+            # If there's open time before this class starts
+            if w.start_time > current_dt:
+                open_intervals.append({
+                    "start": current_dt.strftime("%I:%M %p").lstrip("0"),
+                    "end": min(w.start_time, day_close_dt).strftime("%I:%M %p").lstrip("0"),
+                })
+            current_dt = max(current_dt, w.end_time)
+
+        if current_dt < day_close_dt:
+            open_intervals.append({
+                "start": current_dt.strftime("%I:%M %p").lstrip("0"),
+                "end": day_close_dt.strftime("%I:%M %p").lstrip("0"),
+            })
+
+        return {
+            "facility_name": "Rose E. Schneider Family YMCA",
+            "studio": studio_filter,
+            "target_date": target_date.isoformat(),
+            "facility_hours": f"{open_time.strftime('%I:%M %p').lstrip('0')} - {close_time.strftime('%I:%M %p').lstrip('0')}",
+            "occupied_classes_count": len(occupied_sorted),
+            "occupied_windows": [
+                {
+                    "activity": w.activity_name,
+                    "start": w.start_time.strftime("%I:%M %p").lstrip("0"),
+                    "end": w.end_time.strftime("%I:%M %p").lstrip("0"),
+                    "instructor": w.instructor,
+                }
+                for w in occupied_sorted
+            ],
+            "open_windows": open_intervals,
+        }

@@ -25,6 +25,8 @@ import {
   Switch,
   Collapse,
   ScrollArea,
+  ThemeIcon,
+  SimpleGrid,
 } from '@mantine/core';
 import {
   IconPlus,
@@ -57,6 +59,7 @@ import {
   IconBulb,
   IconSettings,
   IconInfoCircle,
+  IconBuildingStore,
 } from '@tabler/icons-react';
 import { apiClient, ConflictCheckResult } from '../api/client';
 import {
@@ -80,6 +83,7 @@ interface Props {
   places?: PlaceItem[];
   placesLoading?: boolean;
   onRefreshPlaces?: () => Promise<void> | void;
+  onRefreshEvents?: () => Promise<void> | void;
   onSelectEvent?: (event: EventItem) => void;
   onToggleComplete?: (eventId: string) => void;
 }
@@ -140,6 +144,7 @@ export const EventsView: React.FC<Props> = ({
   places: placesProp,
   placesLoading = false,
   onRefreshPlaces,
+  onRefreshEvents,
   onSelectEvent,
   onToggleComplete,
 }) => {
@@ -148,7 +153,44 @@ export const EventsView: React.FC<Props> = ({
   const [isRecurring, setIsRecurring] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<string | null>('upcoming');
+  const [activeTab, setActiveTabState] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      const hash = window.location.hash.replace(/^#\/?/, '').toLowerCase();
+      const parts = hash.split('/');
+      if (parts[0] === 'events' && parts[1] && ['upcoming', 'completed', 'generators'].includes(parts[1])) {
+        return parts[1];
+      }
+    }
+    return 'upcoming';
+  });
+
+  const setActiveTab = (val: string | null) => {
+    setActiveTabState(val);
+    if (typeof window !== 'undefined' && val) {
+      const newHash = val === 'upcoming' ? '#/events' : `#/events/${val}`;
+      if (window.location.hash !== newHash) {
+        window.history.replaceState(null, '', newHash);
+      }
+    }
+  };
+
+  useEffect(() => {
+    const handleHash = () => {
+      const hash = window.location.hash.replace(/^#\/?/, '').toLowerCase();
+      const parts = hash.split('/');
+      if (parts[0] === 'events') {
+        const sub = parts[1];
+        if (sub && ['upcoming', 'completed', 'generators'].includes(sub)) {
+          setActiveTabState(sub);
+        } else if (!sub) {
+          setActiveTabState('upcoming');
+        }
+      }
+    };
+    window.addEventListener('hashchange', handleHash);
+    return () => window.removeEventListener('hashchange', handleHash);
+  }, []);
+
   const [filterType, setFilterType] = useState<string>('ALL');
   const [sortBy, setSortBy] = useState<'deadline' | 'scheduled'>('deadline');
 
@@ -157,6 +199,7 @@ export const EventsView: React.FC<Props> = ({
   const [eventType, setEventType] = useState<EventType>('CUSTOM');
   const [durationMinutes, setDurationMinutes] = useState(60);
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  const [selectedStudio, setSelectedStudio] = useState<string | null>(null);
   const [selectedPeople, setSelectedPeople] = useState<string[]>(['Marcus', 'Mom']);
   const [description, setDescription] = useState('');
 
@@ -200,6 +243,40 @@ export const EventsView: React.FC<Props> = ({
   const [newRuleModalOpened, setNewRuleModalOpened] = useState(false);
   const [newRuleFeedback, setNewRuleFeedback] = useState('');
   const [newRuleInstruction, setNewRuleInstruction] = useState('');
+
+  // Default Filter for Extracted Events & AI Perception Review (Default to PENDING)
+  const [feedbackFilter, setFeedbackFilter] = useState<'PENDING' | 'ACCEPTED' | 'SKIPPED' | 'ALL'>('PENDING');
+
+  const pendingFeedbackCount = useMemo(
+    () => emailFeedbacks.filter((f) => f.user_status === 'PENDING').length,
+    [emailFeedbacks]
+  );
+  const acceptedFeedbackCount = useMemo(
+    () => emailFeedbacks.filter((f) => f.user_status === 'ACCEPTED').length,
+    [emailFeedbacks]
+  );
+  const skippedFeedbackCount = useMemo(
+    () =>
+      emailFeedbacks.filter(
+        (f) => f.user_status === 'SKIPPED' || f.user_status === 'AUTOPAY_SKIPPED' || f.user_status === 'REMOVED'
+      ).length,
+    [emailFeedbacks]
+  );
+
+  const filteredEmailFeedbacks = useMemo(() => {
+    if (feedbackFilter === 'PENDING') {
+      return emailFeedbacks.filter((item) => item.user_status === 'PENDING');
+    }
+    if (feedbackFilter === 'ACCEPTED') {
+      return emailFeedbacks.filter((item) => item.user_status === 'ACCEPTED');
+    }
+    if (feedbackFilter === 'SKIPPED') {
+      return emailFeedbacks.filter(
+        (item) => item.user_status === 'SKIPPED' || item.user_status === 'AUTOPAY_SKIPPED' || item.user_status === 'REMOVED'
+      );
+    }
+    return emailFeedbacks;
+  }, [emailFeedbacks, feedbackFilter]);
 
   // Worker Run Results Modal State
   const [selectedRunForDetails, setSelectedRunForDetails] = useState<GeneratorRunItem | null>(null);
@@ -272,9 +349,8 @@ export const EventsView: React.FC<Props> = ({
     setSyncMessage(null);
     try {
       const res = await apiClient.triggerFacilityWorkerRun();
-      setSyncMessage(res.summary_message);
+      setSyncMessage(res.summary_message || 'Facility closure check started in background (Status: RUNNING)...');
       await loadEmailGeneratorData();
-      await handleViewRunResult(res.run);
     } catch (err: any) {
       setSyncMessage(`Facility check failed: ${err?.message || err}`);
     } finally {
@@ -287,9 +363,8 @@ export const EventsView: React.FC<Props> = ({
     setSyncMessage(null);
     try {
       const res = await apiClient.triggerCalendarRuleWorkerRun();
-      setSyncMessage(res.summary_message);
+      setSyncMessage(res.summary_message || 'Calendar rules evaluation started in background (Status: RUNNING)...');
       await loadEmailGeneratorData();
-      await handleViewRunResult(res.run);
     } catch (err: any) {
       setSyncMessage(`Calendar rules evaluation failed: ${err?.message || err}`);
     } finally {
@@ -301,12 +376,8 @@ export const EventsView: React.FC<Props> = ({
     setIsSyncingEmail(true);
     setSyncMessage(null);
     try {
-      const res = await apiClient.triggerMasterDailyRun();
-      if (res.success) {
-        setSyncMessage(`Master daily run completed successfully across all 4 workers!`);
-      } else {
-        setSyncMessage(`Master daily run finished with issues in: ${res.failed_stages.join(', ')}`);
-      }
+      await apiClient.triggerMasterDailyRun();
+      setSyncMessage('Master daily pipeline started in background across all 4 workers (Status: RUNNING)...');
       await loadEmailGeneratorData();
     } catch (err: any) {
       setSyncMessage(`Master run failed: ${err?.message || err}`);
@@ -345,9 +416,10 @@ export const EventsView: React.FC<Props> = ({
     setIsSyncingEmail(true);
     setSyncMessage(null);
     try {
-      const run = await apiClient.triggerEmailGeneratorRun();
-      setSyncMessage(`Sync completed! Scanned ${run.scanned_count} emails, created ${run.created_count} events.`);
+      const res = await apiClient.triggerEmailGeneratorRun();
+      setSyncMessage(res.summary_message || 'Email perception sync started in background (Status: RUNNING)...');
       await loadEmailGeneratorData();
+      if (onRefreshEvents) void onRefreshEvents();
     } catch (err: any) {
       setSyncMessage(`Sync failed: ${err?.message || 'Check Gmail authentication or Ollama connection'}`);
     } finally {
@@ -363,6 +435,7 @@ export const EventsView: React.FC<Props> = ({
         status: 'ACCEPTED',
       });
       await loadEmailGeneratorData();
+      if (onRefreshEvents) void onRefreshEvents();
     } catch (err) {
       console.error('Failed to accept generated event:', err);
     }
@@ -382,10 +455,13 @@ export const EventsView: React.FC<Props> = ({
         event_id: selectedFeedbackForRemove.event_id,
         status: 'REMOVED',
         user_correction_reason: removeReason.trim() || 'User marked event as incorrect.',
+        run_id: selectedFeedbackForRemove.run_id,
+        feedback_id: selectedFeedbackForRemove.id,
       });
       setRemoveModalOpened(false);
       setSelectedFeedbackForRemove(null);
       await loadEmailGeneratorData();
+      if (onRefreshEvents) void onRefreshEvents();
     } catch (err: any) {
       alert(`Failed to remove event: ${err?.message || err}`);
     } finally {
@@ -417,6 +493,7 @@ export const EventsView: React.FC<Props> = ({
       setModifyModalOpened(false);
       setSelectedFeedbackForModify(null);
       await loadEmailGeneratorData();
+      if (onRefreshEvents) void onRefreshEvents();
     } catch (err: any) {
       alert(`Failed to modify event: ${err?.message || err}`);
     } finally {
@@ -517,6 +594,7 @@ export const EventsView: React.FC<Props> = ({
   const handleOpenEventModal = (recurring: boolean) => {
     setIsRecurring(recurring);
     setSaveError(null);
+    setSelectedStudio(null);
     setModalOpened(true);
     void repullPlaces();
   };
@@ -611,6 +689,7 @@ export const EventsView: React.FC<Props> = ({
           title: title.trim() || 'Proposed Event',
           people_involved: selectedPeople,
           place_id: selectedPlaceId || undefined,
+          studio: selectedStudio || undefined,
           notes: description || undefined,
         });
         setConflictWarning(res);
@@ -622,7 +701,7 @@ export const EventsView: React.FC<Props> = ({
     }, 350);
 
     return () => clearTimeout(timer);
-  }, [modalOpened, isRecurring, startDate, durationMinutes, selectedPeople, selectedPlaceId, title, description]);
+  }, [modalOpened, isRecurring, startDate, durationMinutes, selectedPeople, selectedPlaceId, selectedStudio, title, description]);
 
   // Recurring Generator State
   const [recurrenceRule, setRecurrenceRule] = useState<'YEARLY' | 'MONTHLY' | 'BI_WEEKLY' | 'WEEKLY'>('YEARLY');
@@ -735,6 +814,7 @@ export const EventsView: React.FC<Props> = ({
         setDeadline('');
         setDescription('');
         setSelectedPlaceId(null);
+        setSelectedStudio(null);
       } catch (err: any) {
         setSaveError(err?.message || 'Failed to save generator. Please try again.');
       } finally {
@@ -770,6 +850,7 @@ export const EventsView: React.FC<Props> = ({
         place: selectedPlace,
         place_name: selectedPlace.name,
         place_address: selectedPlace.address,
+        studio: selectedStudio || undefined,
         people_involved: selectedPeople,
         description,
         notes: description,
@@ -784,6 +865,7 @@ export const EventsView: React.FC<Props> = ({
         setDeadline('');
         setDescription('');
         setSelectedPlaceId(null);
+        setSelectedStudio(null);
       } catch (err: any) {
         setSaveError(err?.message || 'Failed to save event. Please try again.');
       } finally {
@@ -909,7 +991,19 @@ export const EventsView: React.FC<Props> = ({
             Completed Records ({completedEvents.length})
           </Tabs.Tab>
           <Tabs.Tab value="generators">
-            Recurring Generators ({generators.length})
+            <Group gap={6} wrap="nowrap">
+              <IconSparkles size={14} color="#4c6ef5" />
+              <span>Generators &amp; AI Perception</span>
+              {emailFeedbacks.filter((f) => f.user_status === 'PENDING').length > 0 ? (
+                <Badge size="xs" color="orange" variant="filled" circle>
+                  {emailFeedbacks.filter((f) => f.user_status === 'PENDING').length}
+                </Badge>
+              ) : (
+                <Badge size="xs" color="gray" variant="light">
+                  {generators.length}
+                </Badge>
+              )}
+            </Group>
           </Tabs.Tab>
         </Tabs.List>
 
@@ -982,46 +1076,28 @@ export const EventsView: React.FC<Props> = ({
 
             {generatorSubTab === 'email' ? (
               <Stack gap="sm">
-                {/* 1. Daily Worker Status & Controls Bar */}
-                <Card withBorder radius="md" p="sm" bg="indigo.0">
-                  <Group justify="space-between" align="center" wrap="wrap">
+                {/* 1. Email Perception Banner */}
+                <Card withBorder radius="md" p="sm" bg="blue.0" style={{ borderColor: 'var(--mantine-color-blue-2)' }}>
+                  <Group justify="space-between" align="center" wrap="wrap" gap="xs">
                     <Box>
                       <Group gap="xs" mb={2}>
-                        <IconRobot size={18} color="#4c6ef5" />
-                        <Text size="sm" fw={700} c="indigo.9">
-                          Master Daily Life Worker (Background Orchestration)
+                        <IconMail size={18} color="#1c7ed6" />
+                        <Text size="sm" fw={700} c="blue.9">
+                          Email AI Perception Generator
                         </Text>
-                        <Badge size="xs" color={(workerStatus?.is_worker_running || workerStatus?.is_running !== false) ? 'teal' : 'gray'} variant="filled">
-                          {(workerStatus?.is_worker_running || workerStatus?.is_running !== false) ? 'Daily Daemon Active' : 'Daemon Standby'}
+                        <Badge size="xs" color="blue" variant="light">
+                          {emailFeedbacks.filter((f) => f.user_status === 'PENDING').length} Pending Review
                         </Badge>
-                        {workerStatus?.is_syncing && (
-                          <Badge size="xs" color="blue" variant="outline">
-                            Syncing In Progress...
-                          </Badge>
-                        )}
+                        <Badge size="xs" color="gray" variant="outline">
+                          {promptRules.filter((r) => r.is_active).length} Active Rules
+                        </Badge>
                       </Group>
                       <Text size="11px" c="dimmed">
-                        Orchestrates recurring calendar rules, incoming email perception, facility blackout checks, and pantry depletion runway.
+                        Extracts receipts, bills, and announcements from Gmail via Ollama. Automated background workers run daily; view status & run history in the <strong>Workers</strong> tab.
                       </Text>
-                      {workerStatus?.last_run_time && (
-                        <Text size="11px" c="indigo.8" mt={2}>
-                          Last Master Run: <strong>{new Date(workerStatus.last_run_time).toLocaleString()}</strong>
-                          {workerStatus.next_run_time && (
-                            <> &bull; Next Scheduled: <strong>{new Date(workerStatus.next_run_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</strong></>
-                          )}
-                        </Text>
-                      )}
                     </Box>
 
                     <Group gap="xs">
-                      <Button
-                        size="xs"
-                        variant="default"
-                        leftSection={<IconHistory size={14} />}
-                        onClick={() => setShowRunsCollapse((v) => !v)}
-                      >
-                        Run History ({emailRuns.length})
-                      </Button>
                       <Button
                         size="xs"
                         variant="default"
@@ -1033,7 +1109,7 @@ export const EventsView: React.FC<Props> = ({
                       <Button
                         size="xs"
                         variant="outline"
-                        color="indigo"
+                        color="blue"
                         leftSection={<IconSparkles size={14} />}
                         onClick={handleViewFullPrompt}
                       >
@@ -1044,9 +1120,9 @@ export const EventsView: React.FC<Props> = ({
                         color="blue"
                         loading={isSyncingEmail}
                         leftSection={<IconRefresh size={14} />}
-                        onClick={handleRunMasterAll}
+                        onClick={handleSyncNow}
                       >
-                        Run All Workers
+                        Sync Now
                       </Button>
                     </Group>
                   </Group>
@@ -1064,193 +1140,7 @@ export const EventsView: React.FC<Props> = ({
                   )}
                 </Card>
 
-                {/* 2. Run History Collapsible Section */}
-                <Collapse in={showRunsCollapse}>
-                  <Card withBorder radius="md" p="sm" bg="gray.0" mb="xs">
-                    <Group justify="space-between" mb="xs" wrap="wrap">
-                      <Group gap="xs">
-                        <IconHistory size={16} />
-                        <Text size="xs" fw={700}>Worker Execution Runs</Text>
-                      </Group>
-
-                      {/* Quick Trigger Buttons for Workers */}
-                      <Group gap="xs" wrap="wrap">
-                        <Button
-                          size="compact-xs"
-                          color="blue"
-                          loading={isSyncingEmail}
-                          leftSection={<IconRefresh size={12} />}
-                          onClick={handleRunMasterAll}
-                        >
-                          Run All (Master)
-                        </Button>
-                        <Button
-                          size="compact-xs"
-                          color="red"
-                          variant="light"
-                          loading={isSyncingEmail}
-                          leftSection={<IconRefresh size={12} />}
-                          onClick={handleRetryFailed}
-                        >
-                          Retry Failed
-                        </Button>
-                        <Button
-                          size="compact-xs"
-                          color="grape"
-                          loading={isSyncingEmail}
-                          leftSection={<IconClock size={12} />}
-                          onClick={handleRunCalendarWorker}
-                        >
-                          Calendar Rules
-                        </Button>
-                        <Button
-                          size="compact-xs"
-                          color="indigo"
-                          loading={isSyncingEmail}
-                          leftSection={<IconMail size={12} />}
-                          onClick={handleSyncNow}
-                        >
-                          Email Sync
-                        </Button>
-                        <Button
-                          size="compact-xs"
-                          color="teal"
-                          loading={isSyncingEmail}
-                          leftSection={<IconRefresh size={12} />}
-                          onClick={handleRunDepletionWorker}
-                        >
-                          Depletion Scan
-                        </Button>
-                        <Button
-                          size="compact-xs"
-                          color="orange"
-                          loading={isSyncingEmail}
-                          leftSection={<IconRefresh size={12} />}
-                          onClick={handleRunFacilityWorker}
-                        >
-                          Facility Check
-                        </Button>
-                        <ActionIcon size="xs" variant="subtle" onClick={() => void loadEmailGeneratorData()}>
-                          <IconRefresh size={12} />
-                        </ActionIcon>
-                      </Group>
-                    </Group>
-
-                    {/* Filter Segmented Control */}
-                    <SegmentedControl
-                      size="xs"
-                      radius="sm"
-                      value={workerTypeFilter}
-                      onChange={setWorkerTypeFilter}
-                      data={[
-                        { label: `All (${emailRuns.length})`, value: 'ALL' },
-                        { label: `Rules (${emailRuns.filter((r) => r.generator_type.includes('CALENDAR')).length})`, value: 'CALENDAR_RULE_WORKER' },
-                        { label: `Email (${emailRuns.filter((r) => r.generator_type.includes('EMAIL')).length})`, value: 'EMAIL_EVENT_WORKER' },
-                        { label: `Facility (${emailRuns.filter((r) => r.generator_type.includes('FACILITY')).length})`, value: 'FACILITY_CLOSURE_WORKER' },
-                        { label: `Depletion (${emailRuns.filter((r) => r.generator_type.includes('DEPLETION')).length})`, value: 'INVENTORY_DEPLETION_WORKER' },
-                      ]}
-                      mb="xs"
-                    />
-
-                    {emailRuns.filter((r) => {
-                      if (workerTypeFilter === 'ALL') return true;
-                      if (workerTypeFilter === 'CALENDAR_RULE_WORKER') return r.generator_type.includes('CALENDAR');
-                      if (workerTypeFilter === 'EMAIL_EVENT_WORKER') return r.generator_type.includes('EMAIL');
-                      if (workerTypeFilter === 'FACILITY_CLOSURE_WORKER') return r.generator_type.includes('FACILITY');
-                      if (workerTypeFilter === 'INVENTORY_DEPLETION_WORKER') return r.generator_type.includes('DEPLETION');
-                      return r.generator_type === workerTypeFilter;
-                    }).length === 0 ? (
-                      <Text size="xs" c="dimmed" fs="italic">No execution runs logged for this worker type yet. Click one of the run buttons above to trigger a job.</Text>
-                    ) : (
-                      <Table striped highlightOnHover>
-                        <Table.Thead>
-                          <Table.Tr>
-                            <Table.Th>Worker</Table.Th>
-                            <Table.Th>Started At</Table.Th>
-                            <Table.Th>Status</Table.Th>
-                            <Table.Th>Scanned</Table.Th>
-                            <Table.Th>Outcome</Table.Th>
-                            <Table.Th>Action</Table.Th>
-                          </Table.Tr>
-                        </Table.Thead>
-                        <Table.Tbody>
-                          {emailRuns
-                            .filter((r) => {
-                              if (workerTypeFilter === 'ALL') return true;
-                              if (workerTypeFilter === 'CALENDAR_RULE_WORKER') return r.generator_type.includes('CALENDAR');
-                              if (workerTypeFilter === 'EMAIL_EVENT_WORKER') return r.generator_type.includes('EMAIL');
-                              if (workerTypeFilter === 'FACILITY_CLOSURE_WORKER') return r.generator_type.includes('FACILITY');
-                              if (workerTypeFilter === 'INVENTORY_DEPLETION_WORKER') return r.generator_type.includes('DEPLETION');
-                              return r.generator_type === workerTypeFilter;
-                            })
-                            .map((r) => {
-                              const isRule = r.generator_type.includes('CALENDAR');
-                              const isEmail = r.generator_type.includes('EMAIL');
-                              const isDepletion = r.generator_type.includes('DEPLETION');
-
-                              const badgeColor = isRule ? 'grape' : isEmail ? 'indigo' : isDepletion ? 'teal' : 'orange';
-                              const workerLabel = isRule ? 'Calendar Rules' : isEmail ? 'Email Perception' : isDepletion ? 'Pantry Depletion' : 'Facility Blackouts';
-
-                              return (
-                                <Table.Tr key={r.id}>
-                                  <Table.Td>
-                                    <Badge size="xs" color={badgeColor}>
-                                      {workerLabel}
-                                    </Badge>
-                                  </Table.Td>
-                                  <Table.Td>
-                                    <Text size="xs">{new Date(r.started_at).toLocaleString()}</Text>
-                                  </Table.Td>
-                                  <Table.Td>
-                                    <Badge size="xs" color={r.status === 'SUCCESS' ? 'teal' : r.status === 'FAILED' ? 'red' : 'blue'}>
-                                      {r.status}
-                                    </Badge>
-                                  </Table.Td>
-                                  <Table.Td>
-                                    <Text size="xs" fw={600}>{r.scanned_count} items</Text>
-                                  </Table.Td>
-                                  <Table.Td>
-                                    <Text size="xs" fw={600} c={r.status === 'FAILED' ? 'red' : 'teal'}>
-                                      {isRule || isEmail
-                                        ? `${r.created_count} events`
-                                        : isDepletion
-                                        ? `${r.created_count} low stock`
-                                        : `${r.created_count} conflicts`}
-                                    </Text>
-                                  </Table.Td>
-                                  <Table.Td>
-                                    <Group gap="xs">
-                                      <Button
-                                        size="compact-xs"
-                                        variant="light"
-                                        color="indigo"
-                                        onClick={() => handleViewRunResult(r)}
-                                      >
-                                        View Result
-                                      </Button>
-                                      {r.status === 'FAILED' && (
-                                        <Button
-                                          size="compact-xs"
-                                          variant="filled"
-                                          color="red"
-                                          onClick={() => handleRetrySingleWorker(r)}
-                                        >
-                                          Retry
-                                        </Button>
-                                      )}
-                                    </Group>
-                                  </Table.Td>
-                                </Table.Tr>
-                              );
-                            })}
-                        </Table.Tbody>
-                      </Table>
-                    )}
-                  </Card>
-                </Collapse>
-
-
-                {/* 3. Learned Prompt Rules Collapsible Section */}
+                {/* 2. Learned Prompt Rules Collapsible Section */}
                 <Collapse in={showRulesCollapse}>
                   <Card withBorder radius="md" p="sm" bg="yellow.0" mb="xs">
                     <Group justify="space-between" mb="xs">
@@ -1317,18 +1207,43 @@ export const EventsView: React.FC<Props> = ({
                 </Collapse>
 
                 {/* 4. Generated Events & AI Reasoning Review Section */}
-                <Group justify="space-between" mt="xs" mb={4}>
-                  <Text size="xs" fw={700}>
-                    Extracted Events &amp; AI Perception Review ({emailFeedbacks.length})
-                  </Text>
-                  <Button
-                    size="compact-xs"
-                    variant="subtle"
-                    leftSection={<IconRefresh size={12} />}
-                    onClick={() => void loadEmailGeneratorData()}
-                  >
-                    Refresh
-                  </Button>
+                <Group justify="space-between" mt="xs" mb={4} wrap="wrap" gap="xs">
+                  <Group gap="xs">
+                    <Text size="xs" fw={700}>
+                      Extracted Events &amp; AI Perception Review
+                    </Text>
+                    {pendingFeedbackCount > 0 ? (
+                      <Badge size="xs" color="orange" variant="filled">
+                        {pendingFeedbackCount} Pending Review
+                      </Badge>
+                    ) : (
+                      <Badge size="xs" color="teal" variant="light">
+                        0 Pending
+                      </Badge>
+                    )}
+                  </Group>
+
+                  <Group gap="xs">
+                    <SegmentedControl
+                      size="xs"
+                      value={feedbackFilter}
+                      onChange={(val) => setFeedbackFilter(val as any)}
+                      data={[
+                        { label: `Pending (${pendingFeedbackCount})`, value: 'PENDING' },
+                        { label: `Accepted (${acceptedFeedbackCount})`, value: 'ACCEPTED' },
+                        { label: `Skipped (${skippedFeedbackCount})`, value: 'SKIPPED' },
+                        { label: `All (${emailFeedbacks.length})`, value: 'ALL' },
+                      ]}
+                    />
+                    <Button
+                      size="compact-xs"
+                      variant="subtle"
+                      leftSection={<IconRefresh size={12} />}
+                      onClick={() => void loadEmailGeneratorData()}
+                    >
+                      Refresh
+                    </Button>
+                  </Group>
                 </Group>
 
                 {isLoadingEmailData && emailFeedbacks.length === 0 ? (
@@ -1347,9 +1262,24 @@ export const EventsView: React.FC<Props> = ({
                       Run First Sync
                     </Button>
                   </Card>
+                ) : filteredEmailFeedbacks.length === 0 ? (
+                  <Card withBorder radius="md" p="lg" bg="gray.0" style={{ textAlign: 'center' }}>
+                    <Text size="sm" fw={600} c="teal.8">
+                      ✨ All Caught Up! No pending perception events require review.
+                    </Text>
+                    <Text size="xs" c="dimmed" mt={4}>
+                      {emailFeedbacks.length} processed email item(s) are hidden by the default &quot;Pending&quot; filter. Select &quot;Accepted&quot;, &quot;Skipped&quot;, or &quot;All&quot; above to view them.
+                    </Text>
+                  </Card>
                 ) : (
                   <Stack gap="xs">
-                    {emailFeedbacks.map((item) => (
+                    {filteredEmailFeedbacks.map((item) => {
+                      const isClosure =
+                        item.llm_category === 'FACILITY_CLOSURE' ||
+                        (item.event_id && item.event_id.startsWith('cls_')) ||
+                        !!item.closure_facility_name;
+
+                      return (
                       <Card key={item.id} withBorder radius="md" p="sm" shadow="xs">
                         <Stack gap="xs">
                           {/* Row 1: Title, Category, Amount & Status */}
@@ -1357,13 +1287,19 @@ export const EventsView: React.FC<Props> = ({
                             <Box style={{ flex: 1 }}>
                               <Group gap="xs" mb={2}>
                                 <Text fw={700} size="sm">
-                                  {item.event_title || item.email_subject || 'Untitled Event'}
+                                  {isClosure
+                                    ? `Closure: ${item.closure_facility_name || item.event_title || item.email_subject || 'Facility Closure'}`
+                                    : item.event_title || item.email_subject || 'Untitled Event'}
                                 </Text>
-                                {item.llm_category && (
+                                {isClosure ? (
+                                  <Badge size="xs" color="orange" variant="filled">
+                                    FACILITY CLOSURE
+                                  </Badge>
+                                ) : item.llm_category ? (
                                   <Badge size="xs" color={getCategoryBadgeColor((item.llm_category as EventType) || 'CUSTOM')}>
                                     {item.llm_category}
                                   </Badge>
-                                )}
+                                ) : null}
                                 {item.total_amount && item.total_amount > 0 ? (
                                   <Badge size="xs" color="teal" variant="light">
                                     ${item.total_amount.toFixed(2)}
@@ -1402,20 +1338,80 @@ export const EventsView: React.FC<Props> = ({
                             </Badge>
                           </Group>
 
+                          {/* Dedicated Facility Closure Preview Box */}
+                          {isClosure && (
+                            <Paper withBorder p="xs" radius="md" bg="orange.0" style={{ borderColor: 'var(--mantine-color-orange-3)' }}>
+                              <Group justify="space-between" align="center" mb={6}>
+                                <Group gap="xs">
+                                  <ThemeIcon size="sm" radius="sm" color="orange" variant="light">
+                                    <IconBuildingStore size={14} />
+                                  </ThemeIcon>
+                                  <Text size="xs" fw={700} c="orange.9">
+                                    {item.closure_facility_name || 'Rose E. Schneider Family YMCA'}
+                                  </Text>
+                                  {item.closure_facility_address && (
+                                    <Text size="10px" c="dimmed">
+                                      &bull; {item.closure_facility_address}
+                                    </Text>
+                                  )}
+                                </Group>
+                                <Badge size="xs" color="orange" variant="light">
+                                  Conflict Protection
+                                </Badge>
+                              </Group>
+
+                              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
+                                <Box>
+                                  <Text size="10px" fw={700} c="dimmed">
+                                    CLOSED WINDOW
+                                  </Text>
+                                  <Text size="xs" fw={600} c="dark.8">
+                                    {item.closure_start
+                                      ? new Date(item.closure_start).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+                                      : item.scheduled_at
+                                      ? new Date(item.scheduled_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+                                      : 'Date in notice'}
+                                    {'  ➔  '}
+                                    {item.closure_end
+                                      ? new Date(item.closure_end).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+                                      : item.deadline
+                                      ? new Date(item.deadline).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+                                      : 'End of notice'}
+                                  </Text>
+                                </Box>
+
+                                <Box>
+                                  <Text size="10px" fw={700} c="dimmed">
+                                    CLOSURE REASON
+                                  </Text>
+                                  <Text size="xs" c="dark.7">
+                                    {item.closure_reason || item.llm_reason || 'Facility closed per email announcement.'}
+                                  </Text>
+                                </Box>
+                              </SimpleGrid>
+
+                              <Text size="10px" c="orange.9" mt={6} fs="italic">
+                                ℹ️ Accepting keeps this closure registered in the conflict engine so conflicting swim lessons, gym trips, or family events at this facility are automatically alerted.
+                              </Text>
+                            </Paper>
+                          )}
+
                           {/* Row 2: AI Reasoning Callout */}
-                          <Paper withBorder p="xs" radius="sm" bg="indigo.0" style={{ borderColor: '#bac8ff' }}>
-                            <Group gap="xs" align="flex-start">
-                              <IconRobot size={15} color="#4c6ef5" style={{ marginTop: 2, flexShrink: 0 }} />
-                              <Box style={{ flex: 1 }}>
-                                <Text size="xs" fw={600} c="indigo.9">
-                                  🤖 AI Extraction Reasoning:
-                                </Text>
-                                <Text size="11px" c="dark.7">
-                                  {item.llm_reason || 'Identified event payload from email body.'}
-                                </Text>
-                              </Box>
-                            </Group>
-                          </Paper>
+                          {!isClosure && (
+                            <Paper withBorder p="xs" radius="sm" bg="indigo.0" style={{ borderColor: '#bac8ff' }}>
+                              <Group gap="xs" align="flex-start">
+                                <IconRobot size={15} color="#4c6ef5" style={{ marginTop: 2, flexShrink: 0 }} />
+                                <Box style={{ flex: 1 }}>
+                                  <Text size="xs" fw={600} c="indigo.9">
+                                    🤖 AI Extraction Reasoning:
+                                  </Text>
+                                  <Text size="11px" c="dark.7">
+                                    {item.llm_reason || 'Identified event payload from email body.'}
+                                  </Text>
+                                </Box>
+                              </Group>
+                            </Paper>
+                          )}
 
                           {/* User Correction Notice if present */}
                           {item.user_correction_reason && (
@@ -1437,18 +1433,20 @@ export const EventsView: React.FC<Props> = ({
                                   leftSection={<IconCheck size={13} />}
                                   onClick={() => void handleAcceptFeedback(item)}
                                 >
-                                  Accept &amp; Keep
+                                  {isClosure ? 'Accept Closure' : 'Accept & Keep'}
                                 </Button>
                               )}
-                              <Button
-                                size="xs"
-                                color="blue"
-                                variant="light"
-                                leftSection={<IconEdit size={13} />}
-                                onClick={() => handleOpenModifyModal(item)}
-                              >
-                                Modify Event
-                              </Button>
+                              {!isClosure && (
+                                <Button
+                                  size="xs"
+                                  color="blue"
+                                  variant="light"
+                                  leftSection={<IconEdit size={13} />}
+                                  onClick={() => handleOpenModifyModal(item)}
+                                >
+                                  Modify Event
+                                </Button>
+                              )}
                               <Button
                                 size="xs"
                                 color="red"
@@ -1456,13 +1454,14 @@ export const EventsView: React.FC<Props> = ({
                                 leftSection={<IconTrash size={13} />}
                                 onClick={() => handleOpenRemoveModal(item)}
                               >
-                                Remove Incorrect
+                                {isClosure ? 'Dismiss Closure' : 'Remove Incorrect'}
                               </Button>
                             </Group>
                           )}
                         </Stack>
                       </Card>
-                    ))}
+                    );
+                  })}
                   </Stack>
                 )}
               </Stack>
@@ -2209,6 +2208,27 @@ export const EventsView: React.FC<Props> = ({
                   )}
                 </Group>
               </Paper>
+            )}
+
+            {selectedPlace && (
+              <Select
+                mt={8}
+                label="Facility Zone / Studio (Optional)"
+                placeholder="Whole Facility / Any"
+                data={[
+                  { value: 'Warm Water Pool', label: '🏊 Warm Water Pool' },
+                  { value: 'Lap Pool', label: '🏊 Lap Pool' },
+                  { value: 'Gymnasium', label: '🏀 Gymnasium' },
+                  { value: 'Studio A', label: '🧘 Studio A' },
+                  { value: 'Group Exercise Studio', label: '🏋️ Group Exercise Studio' },
+                ]}
+                value={selectedStudio}
+                onChange={setSelectedStudio}
+                clearable
+                searchable
+                description="Select a studio to target resource conflict checks (e.g. aquatic pool classes vs basketball gym)."
+                disabled={isSaving}
+              />
             )}
           </Box>
 

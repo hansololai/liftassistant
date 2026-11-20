@@ -24,6 +24,7 @@ export interface EventItem {
   deadline?: string;
   completed_at?: string;
   place_id?: string;
+  studio?: string;
   latitude?: number;
   longitude?: number;
   place?: PlaceItem;
@@ -210,6 +211,20 @@ export interface GeneratorRunItem {
   created_count: number;
   error_message?: string;
   details_json?: string;
+  event_ids?: string[];
+  generated_events?: {
+    id: string;
+    title: string;
+    event_type: string;
+    scheduled_at?: string;
+    deadline?: string;
+    total_amount?: number;
+    source?: string;
+    notes?: string;
+    llm_category?: string;
+    llm_reason?: string;
+    user_status?: string;
+  }[];
 }
 
 export interface GeneratorFeedbackItem {
@@ -232,6 +247,11 @@ export interface GeneratorFeedbackItem {
   total_amount?: number;
   scheduled_at?: string;
   deadline?: string;
+  closure_facility_name?: string;
+  closure_start?: string;
+  closure_end?: string;
+  closure_reason?: string;
+  closure_facility_address?: string;
 }
 
 export interface LearnedPromptRuleItem {

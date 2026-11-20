@@ -29,7 +29,8 @@ def main():
     em = EventManager(event_repo=repo)
     gen = EmailEventGenerator(event_manager=em)
 
-    with open("data/feb20_full_batch.json", "r", encoding="utf-8") as f:
+    batch_path = Path("tests/fixtures/mock_email_batch.json")
+    with open(batch_path, "r", encoding="utf-8") as f:
         batch = json.load(f)
 
     print(f"Testing EmailEventGenerator on batch of {len(batch)} emails...")

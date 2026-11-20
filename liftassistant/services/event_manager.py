@@ -15,10 +15,12 @@ from liftassistant.models.domain import (
     LifeEvent,
     MaintenanceDetail,
     Place,
+    ResourceClosure,
     ShoppingDetail,
 )
 from liftassistant.services.cas_storage import CASStorage
 from liftassistant.services.conflict_engine import ConflictEngine
+from liftassistant.services.facility_provider import YmcaScheduleProvider
 from liftassistant.services.map_service import MapService
 from liftassistant.api.routers.ingest import register_ingestion_job
 
@@ -125,6 +127,7 @@ class EventManager:
         dining_detail: Optional[DiningDetail] = None,
         shopping_detail: Optional[ShoppingDetail] = None,
         maintenance_detail: Optional[MaintenanceDetail] = None,
+        studio: Optional[str] = None,
         check_conflicts: bool = True,
     ) -> LifeEvent:
         """Create a planned future event grounded with a verified physical place (Option 2)."""
@@ -166,6 +169,7 @@ class EventManager:
             scheduled_end_at=scheduled_at + timedelta(minutes=duration_minutes),
             deadline=deadline,
             place_id=place_id,
+            studio=studio,
             people_involved=people_involved or [],
             notes=notes,
             dining_detail=dining,
@@ -388,6 +392,7 @@ class EventManager:
             event_type=kwargs.get("event_type", "CUSTOM"),
             scheduled_at=sched_at,
             place_id=kwargs.get("place_id"),
+            studio=kwargs.get("studio"),
             duration_minutes=int(kwargs.get("duration_minutes", 60)),
             deadline=kwargs.get("deadline"),
             people_involved=kwargs.get("people_involved"),
@@ -493,24 +498,97 @@ class EventManager:
 
         return conflicts
 
-    def scan_and_sync_facility_closures(self) -> Dict[str, Any]:
-        """Core domain calculation: inspect active resource closures and synchronize conflict flags across events."""
+    def scan_and_sync_facility_closures(self, target_date: Optional[date] = None, horizon_days: int = 7) -> Dict[str, Any]:
+        """Core domain calculation:
+        1. Query external facility API (GroupEx PRO API for YMCA Warm Pool and Lap Pool) for live opening hours and classes.
+        2. Persist occupied class blackout windows for the next week into the resource_closures database table.
+        3. Inspect active resource closures (e.g. holiday blackouts from Gmail / manual + 7-day API class blackouts).
+        4. Synchronize conflict flags across all calendar events.
+        """
+        eval_date = target_date or datetime.now().date()
+        facility_provider = getattr(self.conflict_engine, "facility_provider", None) or YmcaScheduleProvider()
+
+        # 1. Fetch & persist next horizon_days of occupied facility classes into resource_closures table
+        persisted_closures: List[ResourceClosure] = []
+        for offset in range(horizon_days):
+            cur_date = eval_date + timedelta(days=offset)
+            # Warm Water Pool
+            wp_windows = facility_provider.get_occupied_windows(target_date=cur_date, studio_filter="Warm Water Pool")
+            for w in wp_windows:
+                instr_str = f" ({w.instructor})" if w.instructor else ""
+                persisted_closures.append(
+                    ResourceClosure(
+                        id=f"cls_ymca_wp_{w.start_time.strftime('%Y%m%d_%H%M')}",
+                        resource_id="pl_ymca",
+                        resource_name="Rose E. Schneider Family YMCA (Warm Water Pool)",
+                        start_time=w.start_time,
+                        end_time=w.end_time,
+                        reason=f"Warm Pool Occupied: {w.activity_name}{instr_str}",
+                        source="FACILITY_API",
+                        source_reference_id=f"groupex_3827_{w.activity_name}_{w.start_time.strftime('%Y%m%d%H%M')}",
+                    )
+                )
+            # Lap Pool
+            lp_windows = facility_provider.get_occupied_windows(target_date=cur_date, studio_filter="Lap Pool")
+            for w in lp_windows:
+                instr_str = f" ({w.instructor})" if w.instructor else ""
+                persisted_closures.append(
+                    ResourceClosure(
+                        id=f"cls_ymca_lp_{w.start_time.strftime('%Y%m%d_%H%M')}",
+                        resource_id="pl_ymca",
+                        resource_name="Rose E. Schneider Family YMCA (Lap Pool)",
+                        start_time=w.start_time,
+                        end_time=w.end_time,
+                        reason=f"Lap Pool Occupied: {w.activity_name}{instr_str}",
+                        source="FACILITY_API",
+                        source_reference_id=f"groupex_3827_{w.activity_name}_{w.start_time.strftime('%Y%m%d%H%M')}",
+                    )
+                )
+
+        saved_api_count = 0
+        if self.place_repo and persisted_closures:
+            saved_api_count = self.place_repo.sync_facility_api_closures(persisted_closures)
+
+        # 2. Inspect active closures from database (now including the persisted 7-day API blackout windows)
         closures = self.place_repo.list_closures() if self.place_repo else []
-        conflicts = self.evaluate_all_conflicts(persist_sync=True)
-        closure_names = [f"{c.resource_name} ({c.reason or 'Closed'})" for c in closures]
-        if closures:
-            summary = (
-                f"Facility schedule scan complete: verified {len(closures)} active resource closure(s): "
-                f"{'; '.join(closure_names)}. Synchronized {len(conflicts)} calendar conflict(s)."
+        conflicts = self.evaluate_all_conflicts(persist_sync=True, force_refresh_facility=True)
+
+        warm_pool_schedule = None
+        api_status = "SUCCESS"
+        try:
+            if hasattr(facility_provider, "get_studio_open_hours"):
+                warm_pool_schedule = facility_provider.get_studio_open_hours(eval_date, studio_filter="Warm Water Pool")
+        except Exception as e:
+            logger.warning("Could not query facility API studio open hours: %s", e)
+            api_status = f"ERROR: {e}"
+
+        closure_names = [f"{c.resource_name} ({c.reason or 'Closed'})" for c in closures if c.source != "FACILITY_API"]
+
+        api_info = ""
+        if warm_pool_schedule:
+            classes_cnt = warm_pool_schedule.get("occupied_classes_count", 0)
+            open_spans = ", ".join([f"{w['start']}–{w['end']}" for w in warm_pool_schedule.get("open_windows", [])])
+            api_info = (
+                f"Live API verified: Rose E. Schneider Family YMCA (Stored {saved_api_count} occupied pool classes for the next {horizon_days} days in DB. "
+                f"Today Warm Water Pool open {warm_pool_schedule['facility_hours']}, {classes_cnt} class blackout(s), open swim: {open_spans}). "
             )
+
+        if closure_names:
+            closure_info = f"Verified {len(closure_names)} holiday/email closure(s): {'; '.join(closure_names)}. "
         else:
-            summary = "Facility schedule scan complete: no active closures found. Schedule is conflict-free."
+            closure_info = "0 active holiday closures. "
+
+        conflict_info = f"Synchronized {len(conflicts)} calendar conflict(s)."
+        summary = f"{api_info}{closure_info}{conflict_info}".strip()
 
         return {
-            "scanned_count": len(closures),
+            "scanned_count": saved_api_count + len(closure_names),
             "created_count": len(conflicts),
+            "saved_api_count": saved_api_count,
             "closures": [c.model_dump() for c in closures],
             "conflicts": [c.model_dump() for c in conflicts],
+            "warm_pool_schedule": warm_pool_schedule,
+            "api_status": api_status,
             "summary_message": summary,
         }
 
@@ -521,6 +599,7 @@ class EventManager:
         title: str = "Proposed Event",
         people_involved: Optional[List[str]] = None,
         place_id: Optional[str] = None,
+        studio: Optional[str] = None,
         notes: Optional[str] = None,
         exclude_event_id: Optional[str] = None,
     ) -> List[Conflict]:
@@ -549,6 +628,7 @@ class EventManager:
             scheduled_end_at=scheduled_end_at,
             place_id=place_id,
             place=place,
+            studio=studio,
             people_involved=people_involved or [],
             notes=notes,
         )

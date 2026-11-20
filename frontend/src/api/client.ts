@@ -71,6 +71,7 @@ export function normalizeEventFromApi(raw: any): EventItem {
     ...evt,
     place_name: evt.place_name || evt.place?.name,
     place_address: evt.place_address || evt.place?.address,
+    studio: evt.studio || undefined,
     description: evt.description || evt.notes,
     dining_details: evt.dining_details || evt.dining_detail,
     shopping_details: evt.shopping_details || evt.shopping_detail,
@@ -116,6 +117,7 @@ export interface ConflictCheckPayload {
   title?: string;
   people_involved?: string[];
   place_id?: string;
+  studio?: string;
   notes?: string;
   event_id?: string;
 }
@@ -378,6 +380,8 @@ export const apiClient = {
     run: GeneratorRunItem;
     summary_message: string;
     events: GeneratorFeedbackItem[];
+    existing_events?: GeneratorFeedbackItem[];
+    feedbacks?: GeneratorFeedbackItem[];
   }> {
     return requestJson(`/generators/runs/${encodeURIComponent(runId)}`);
   },
@@ -408,8 +412,8 @@ export const apiClient = {
   },
 
   /** Trigger an immediate manual run of the Email Event Generator. */
-  async triggerEmailGeneratorRun(maxResults = 25): Promise<GeneratorRunItem> {
-    return requestJson<GeneratorRunItem>(`/generators/email/run?max_results=${maxResults}`, {
+  async triggerEmailGeneratorRun(maxResults = 25): Promise<{ run: GeneratorRunItem; summary_message: string }> {
+    return requestJson<{ run: GeneratorRunItem; summary_message: string }>(`/generators/email/run?max_results=${maxResults}`, {
       method: 'POST',
     });
   },
@@ -427,6 +431,8 @@ export const apiClient = {
     modified_title?: string;
     modified_scheduled_at?: string;
     modified_amount?: number;
+    run_id?: string;
+    feedback_id?: string;
   }): Promise<{ success: boolean; status: string; event_id: string; feedback?: GeneratorFeedbackItem; learned_rule?: LearnedPromptRuleItem }> {
     return requestJson('/generators/email/feedback', {
       method: 'POST',

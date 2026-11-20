@@ -132,30 +132,52 @@ class ReceiptService:
         return receipt
 
     def _patch_event_location(self, receipt: StandardizedReceipt) -> None:
-        """Ground the parent event to the merchant's place_id and patch total amounts."""
+        """Deferred OCR address enrichment: patches parent event place, totals, and completion."""
         if not receipt.event_id:
             return
         cursor = self.conn.cursor()
-        event_row = cursor.execute("SELECT place_id FROM events WHERE id = ?", (receipt.event_id,)).fetchone()
-        if not event_row:
-            return
 
-        updates = []
-        params = []
-
-        if not event_row["place_id"] and receipt.place_id:
-            updates.append("place_id = ?")
-            params.append(receipt.place_id)
-
-        if updates:
-            params.append(receipt.event_id)
-            sql = f"UPDATE events SET {', '.join(updates)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-            cursor.execute(sql, tuple(params))
-            self.conn.commit()
-
-        # Mark shopping detail pantry_updated = 1
+        # Update event record
         cursor.execute(
-            "UPDATE shopping_details SET pantry_updated = 1 WHERE event_id = ?",
-            (receipt.event_id,),
+            """
+            UPDATE events 
+            SET place_id = COALESCE(?, place_id),
+                tax_amount = CASE WHEN tax_amount = 0.0 THEN ? ELSE tax_amount END,
+                completed_at = COALESCE(completed_at, ?),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                receipt.place_id,
+                receipt.tax_amount,
+                receipt.transaction_time.isoformat() if receipt.transaction_time else datetime.now().isoformat(),
+                receipt.event_id,
+            ),
         )
+
+        # Patch shopping_details or dining_details total_amount
+        evt_row = cursor.execute("SELECT event_type FROM events WHERE id = ?", (receipt.event_id,)).fetchone()
+        evt_type = evt_row["event_type"] if evt_row else "SHOPPING"
+        if evt_type == "DINING":
+            cursor.execute(
+                """
+                INSERT INTO dining_details (event_id, event_type, total_amount)
+                VALUES (?, 'DINING', ?)
+                ON CONFLICT(event_id) DO UPDATE SET
+                    total_amount = CASE WHEN dining_details.total_amount = 0.0 THEN excluded.total_amount ELSE dining_details.total_amount END
+                """,
+                (receipt.event_id, receipt.total_amount),
+            )
+        else:
+            cursor.execute(
+                """
+                UPDATE shopping_details
+                SET pantry_updated = 1,
+                    receipt_image_path = COALESCE(?, receipt_image_path),
+                    total_amount = CASE WHEN total_amount = 0.0 THEN ? ELSE total_amount END
+                WHERE event_id = ?
+                """,
+                (receipt.file_path, receipt.total_amount, receipt.event_id),
+            )
+
         self.conn.commit()

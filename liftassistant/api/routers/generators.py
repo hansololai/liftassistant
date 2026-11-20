@@ -10,14 +10,16 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from liftassistant.api.deps import (
+    get_db_connection,
     get_event_gen_service,
     get_event_manager,
     get_event_repo,
     get_gen_run_repo,
     get_place_repo,
 )
-from liftassistant.db.repository import EventRepository, GeneratorRunRepository
+from liftassistant.db.repository import EventRepository, GeneratorRunRepository, PlaceRepository
 from liftassistant.models.domain import GeneratorRun, LearnedPromptRule
+from liftassistant.services.event_manager import EventManager
 from liftassistant.services.daily_workers import (
     WORKER_TYPE_CALENDAR_RULES,
     WORKER_TYPE_EMAIL_EVENT,
@@ -57,6 +59,8 @@ class FeedbackActionRequest(BaseModel):
     modified_title: Optional[str] = None
     modified_scheduled_at: Optional[str] = None
     modified_amount: Optional[float] = None
+    run_id: Optional[str] = None
+    feedback_id: Optional[str] = None
 
 
 class RuleCreateRequest(BaseModel):
@@ -117,9 +121,9 @@ def get_master_worker_status():
 
 @router.post("/master/run")
 def trigger_master_daily_run():
-    """Trigger the full daily perception pipeline across all 4 sub-workers."""
+    """Trigger the full daily perception pipeline across all 4 sub-workers asynchronously."""
     master = get_master_daily_worker()
-    return master.run_all(run_type="MANUAL")
+    return master.run_all_async(run_type="MANUAL")
 
 
 @router.post("/master/retry-failed")
@@ -132,70 +136,46 @@ def trigger_master_retry_failed():
 @router.post("/rules/run")
 @router.post("/calendar-rules/run")
 def trigger_calendar_rules_worker_run():
-    """Trigger thin CalendarRuleWorker to evaluate recurring rules and spawn due events."""
+    """Trigger thin CalendarRuleWorker to evaluate recurring rules asynchronously."""
     master = get_master_daily_worker()
-    run = master.calendar_worker.trigger_run(run_type="MANUAL")
-    summary = ""
-    if run.details_json:
-        try:
-            summary = json.loads(run.details_json).get("summary_message", "")
-        except Exception:
-            pass
+    run = master.calendar_worker.trigger_run_async(run_type="MANUAL")
     return {
         "run": run.model_dump(),
-        "summary_message": summary or f"Evaluated rules; spawned {run.created_count} events.",
+        "summary_message": "Calendar rules evaluation started in background.",
     }
 
 
 @router.post("/email/run")
-def trigger_email_worker_run():
-    """Trigger thin EmailEventWorker to perceive incoming emails and extract events."""
+def trigger_email_worker_run(max_results: int = 25):
+    """Trigger thin EmailEventWorker to perceive incoming emails asynchronously."""
     master = get_master_daily_worker()
-    run = master.email_worker.trigger_run(run_type="MANUAL")
-    summary = ""
-    if run.details_json:
-        try:
-            summary = json.loads(run.details_json).get("summary_message", "")
-        except Exception:
-            pass
+    run = master.email_worker.trigger_run_async(run_type="MANUAL", max_results=max_results)
     return {
         "run": run.model_dump(),
-        "summary_message": summary or f"Scanned {run.scanned_count} emails; generated {run.created_count} events.",
+        "summary_message": "Email perception sync started in background.",
     }
 
 
 @router.post("/facility/run")
 def trigger_facility_worker_run():
-    """Trigger thin FacilityClosureWorker to check blackout windows and sync calendar conflicts."""
+    """Trigger thin FacilityClosureWorker to check blackout windows asynchronously."""
     master = get_master_daily_worker()
-    run = master.facility_worker.trigger_run(run_type="MANUAL")
-    summary = ""
-    if run.details_json:
-        try:
-            summary = json.loads(run.details_json).get("summary_message", "")
-        except Exception:
-            pass
+    run = master.facility_worker.trigger_run_async(run_type="MANUAL")
     return {
         "run": run.model_dump(),
-        "summary_message": summary or f"Verified {run.scanned_count} closures; synced {run.created_count} conflicts.",
+        "summary_message": "Facility closure verification started in background.",
         "events": [],
     }
 
 
 @router.post("/depletion/run")
 def trigger_depletion_worker_run():
-    """Trigger thin InventoryDepletionWorker to calculate rolling stock runway."""
+    """Trigger thin InventoryDepletionWorker to calculate stock runway asynchronously."""
     master = get_master_daily_worker()
-    run = master.depletion_worker.trigger_run(run_type="MANUAL")
-    summary = ""
-    if run.details_json:
-        try:
-            summary = json.loads(run.details_json).get("summary_message", "")
-        except Exception:
-            pass
+    run = master.depletion_worker.trigger_run_async(run_type="MANUAL")
     return {
         "run": run.model_dump(),
-        "summary_message": summary or f"Evaluated stock; found {run.created_count} items below runway threshold.",
+        "summary_message": "Pantry depletion analysis started in background.",
         "events": [],
     }
 
@@ -205,8 +185,9 @@ def list_all_generator_runs(
     generator_type: Optional[str] = None,
     limit: int = 50,
     gen_run_repo: GeneratorRunRepository = Depends(get_gen_run_repo),
+    event_repo: EventRepository = Depends(get_event_repo),
 ):
-    """Fetch history of generator execution runs across workers."""
+    """Fetch history of generator execution runs across workers with generated event references."""
     # Map legacy aliases
     alias_map = {
         "EMAIL_EVENT_GENERATOR": WORKER_TYPE_EMAIL_EVENT,
@@ -218,23 +199,69 @@ def list_all_generator_runs(
     # Also fetch legacy types if querying all or specific legacy
     if not runs and generator_type:
         runs = gen_run_repo.list_runs(generator_type=generator_type, limit=limit)
-    return [r.model_dump() for r in runs]
+
+    # Handle direct function invocations in unit tests without FastAPI DI
+    if hasattr(event_repo, "dependency") or not hasattr(event_repo, "list_events_by_run_id"):
+        event_repo = EventRepository(gen_run_repo.conn) if hasattr(gen_run_repo, "conn") else None
+
+    output = []
+    for r in runs:
+        item = r.model_dump()
+        event_ids: List[str] = []
+        generated_events: List[Dict[str, Any]] = []
+
+        if r.details_json:
+            try:
+                parsed = json.loads(r.details_json)
+                event_ids = parsed.get("event_ids") or parsed.get("spawned_events") or []
+                generated_events = parsed.get("generated_events") or []
+            except Exception:
+                pass
+
+        # If not present in details_json, look up directly via event_repo by generator_run_id
+        if not event_ids and r.id:
+            db_events = event_repo.list_events_by_run_id(r.id)
+            if db_events:
+                event_ids = [e.id for e in db_events]
+                generated_events = [
+                    {
+                        "id": e.id,
+                        "title": e.title,
+                        "event_type": e.event_type,
+                        "scheduled_at": e.scheduled_at.isoformat() if e.scheduled_at else None,
+                        "deadline": e.deadline.isoformat() if e.deadline else None,
+                        "notes": e.notes,
+                    }
+                    for e in db_events
+                ]
+
+        item["event_ids"] = event_ids
+        item["generated_events"] = generated_events
+        output.append(item)
+
+    return output
 
 
 @router.get("/runs/{run_id}")
 def get_generator_run_result(
     run_id: str,
     gen_run_repo: GeneratorRunRepository = Depends(get_gen_run_repo),
+    event_repo: EventRepository = Depends(get_event_repo),
 ):
     """Get detailed outcome of a specific worker execution run:
-    - If Email / Calendar Rules: returns list of generated events with LLM / rule reasoning.
-    - If Depletion / Facility: returns summary message.
+    - Returns full list of generated events with LLM perception reasoning and direct event link.
     """
     run = gen_run_repo.get_run(run_id)
     if not run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
 
-    events = gen_run_repo.get_run_feedbacks(run_id)
+    # Handle direct function invocations in unit tests without FastAPI DI
+    if hasattr(event_repo, "dependency") or not hasattr(event_repo, "list_events_by_run_id"):
+        event_repo = EventRepository(gen_run_repo.conn) if hasattr(gen_run_repo, "conn") else None
+
+    feedbacks = gen_run_repo.get_run_feedbacks(run_id)
+    db_events = event_repo.list_events_by_run_id(run_id) if event_repo else []
+
     summary_message = ""
     details: Dict[str, Any] = {}
     if run.details_json:
@@ -244,11 +271,16 @@ def get_generator_run_result(
         except Exception:
             pass
 
-    if not summary_message:
+    if not summary_message or (run.generator_type in (WORKER_TYPE_EMAIL_EVENT, "EMAIL_EVENT_GENERATOR") and "pre-filtered" not in summary_message):
         if run.generator_type in (WORKER_TYPE_EMAIL_EVENT, "EMAIL_EVENT_GENERATOR"):
+            evaluated_count = len(feedbacks)
+            existing_count = sum(1 for fb in feedbacks if fb.llm_category == "EXISTING")
+            prefiltered_count = max(0, run.scanned_count - evaluated_count)
+            existing_clause = f" ({existing_count} already created in prior run)" if existing_count > 0 else ""
             summary_message = (
-                f"Scanned {run.scanned_count} incoming emails via Gmail API. "
-                f"Generated {run.created_count} events into the life ledger."
+                f"Scanned {run.scanned_count} emails from Gmail: "
+                f"{prefiltered_count} non-transactional pre-filtered, {evaluated_count} evaluated by AI{existing_clause}. "
+                f"Generated {run.created_count} new events into the life ledger."
             )
         elif run.generator_type in (WORKER_TYPE_CALENDAR_RULES, "CALENDAR_RULE_GENERATOR"):
             summary_message = (
@@ -261,15 +293,125 @@ def get_generator_run_result(
                 f"{run.created_count} items below 7-day runway flagged for restock."
             )
         elif run.generator_type in (WORKER_TYPE_FACILITY_CLOSURE, "FACILITY_WORKER"):
-            summary_message = details.get("message") or (
+            summary_message = details.get("summary_message") or details.get("message") or (
                 f"Facility schedule scan complete: verified active blackout windows. "
                 f"{run.created_count} closures recorded; conflict flags synchronized."
             )
 
+    # Format full generated events list for traceability
+    generated_events_list = []
+    seen_event_ids = set()
+
+    for e in db_events:
+        seen_event_ids.add(e.id)
+        # Find matching feedback if any
+        matching_fb = next((f for f in feedbacks if f.event_id == e.id), None)
+        total_amt = None
+        if e.shopping_detail:
+            total_amt = e.shopping_detail.total_amount
+        elif e.dining_detail:
+            total_amt = e.dining_detail.total_amount
+
+        generated_events_list.append({
+            "id": e.id,
+            "title": e.title,
+            "event_type": e.event_type,
+            "scheduled_at": e.scheduled_at.isoformat() if e.scheduled_at else None,
+            "deadline": e.deadline.isoformat() if e.deadline else None,
+            "total_amount": total_amt,
+            "source": e.source,
+            "source_reference_id": e.source_reference_id,
+            "notes": e.notes,
+            "llm_category": matching_fb.llm_category if matching_fb else None,
+            "llm_reason": matching_fb.llm_reason if matching_fb else None,
+            "user_status": matching_fb.user_status if matching_fb else "ACCEPTED",
+        })
+
+    # Also include any valid events from feedback that weren't directly captured in db_events (must start with evt_)
+    # Strictly exclude skipped non-events, promotional emails, removed items, or events already created in a previous run
+    existing_events_list = []
+    for fb in feedbacks:
+        if fb.llm_category == "EXISTING" and fb.event_id:
+            ev = event_repo.get_event(fb.event_id) if event_repo else None
+            orig_run_id = ev.generator_run_id if ev and ev.generator_run_id else None
+            orig_run_time = None
+            if not orig_run_id and gen_run_repo and hasattr(gen_run_repo, "conn") and gen_run_repo.conn:
+                orig_fb = gen_run_repo.conn.cursor().execute(
+                    "SELECT run_id, created_at FROM generator_event_feedback WHERE event_id = ? AND llm_category != 'EXISTING' ORDER BY created_at ASC LIMIT 1",
+                    (fb.event_id,)
+                ).fetchone()
+                if orig_fb:
+                    orig_run_id = orig_fb[0]
+                    orig_run_time = str(orig_fb[1])
+
+            if orig_run_id and gen_run_repo:
+                orig_run = gen_run_repo.get_run(orig_run_id)
+                if orig_run and orig_run.started_at:
+                    orig_run_time = orig_run.started_at.isoformat()
+
+            ev_type = (ev.event_type if ev else None) or fb.event_type or "CUSTOM"
+            ex_amt = (
+                ev.shopping_detail.total_amount
+                if ev and ev.shopping_detail
+                else (ev.dining_detail.total_amount if ev and ev.dining_detail else (fb.total_amount or 0.0))
+            )
+            existing_events_list.append({
+                "id": fb.event_id,
+                "title": (ev.title if ev else None) or fb.event_title or fb.email_subject or "Existing Event",
+                "event_type": ev_type,
+                "scheduled_at": ev.scheduled_at.isoformat() if ev and ev.scheduled_at else (fb.scheduled_at.isoformat() if hasattr(fb.scheduled_at, 'isoformat') else str(fb.scheduled_at) if fb.scheduled_at else None),
+                "completed_at": ev.completed_at.isoformat() if ev and ev.completed_at else None,
+                "deadline": ev.deadline.isoformat() if ev and ev.deadline else (fb.deadline.isoformat() if hasattr(fb.deadline, 'isoformat') else str(fb.deadline) if fb.deadline else None),
+                "total_amount": ex_amt,
+                "dining_details": {"total_amount": ex_amt, "rating": 5} if ev_type == "DINING" else (ev.dining_detail.model_dump() if ev and ev.dining_detail else None),
+                "shopping_details": {"total_amount": ex_amt, "pantry_updated": False} if ev_type == "SHOPPING" else (ev.shopping_detail.model_dump() if ev and ev.shopping_detail else None),
+                "source": (ev.source if ev else None) or "AGENT_GMAIL",
+                "source_reference_id": fb.source_reference_id,
+                "originating_run_id": orig_run_id,
+                "originating_run_time": orig_run_time,
+                "notes": ev.notes if ev else None,
+                "llm_category": "EXISTING",
+                "llm_reason": fb.llm_reason,
+                "user_status": "EXISTING",
+            })
+        elif (
+            fb.event_id
+            and fb.event_id not in seen_event_ids
+            and fb.event_id.startswith("evt_")
+            and fb.user_status not in ("SKIPPED", "REMOVED")
+            and fb.llm_category not in ("SKIP", "PROMOTION", "EXISTING")
+        ):
+            seen_event_ids.add(fb.event_id)
+            gen_type = fb.event_type or "CUSTOM"
+            gen_amt = fb.total_amount or 0.0
+            generated_events_list.append({
+                "id": fb.event_id,
+                "title": fb.event_title or fb.email_subject or "Generated Event",
+                "event_type": gen_type,
+                "scheduled_at": fb.scheduled_at.isoformat() if hasattr(fb.scheduled_at, 'isoformat') else str(fb.scheduled_at) if fb.scheduled_at else None,
+                "deadline": fb.deadline.isoformat() if hasattr(fb.deadline, 'isoformat') else str(fb.deadline) if fb.deadline else None,
+                "total_amount": gen_amt,
+                "dining_details": {"total_amount": gen_amt, "rating": 5} if gen_type == "DINING" else None,
+                "shopping_details": {"total_amount": gen_amt, "pantry_updated": False} if gen_type == "SHOPPING" else None,
+                "source": "AGENT_GMAIL",
+                "source_reference_id": fb.source_reference_id,
+                "notes": fb.user_correction_reason,
+                "llm_category": fb.llm_category,
+                "llm_reason": fb.llm_reason,
+                "user_status": fb.user_status,
+            })
+
+    run_dump = run.model_dump()
+    run_dump["event_ids"] = list(seen_event_ids)
+    run_dump["generated_events"] = generated_events_list
+    run_dump["existing_events"] = existing_events_list
+
     return {
-        "run": run.model_dump(),
+        "run": run_dump,
         "summary_message": summary_message,
-        "events": [e.model_dump() for e in events],
+        "events": generated_events_list,
+        "existing_events": existing_events_list,
+        "feedbacks": [f.model_dump() for f in feedbacks],
     }
 
 
@@ -286,18 +428,15 @@ def list_email_generator_runs(
 
 
 
-@router.post("/email/run")
-def trigger_email_generator_run(max_results: int = 25):
-    """Trigger an immediate manual sync run of the Email Event Generator."""
-    worker = get_email_worker()
-    try:
-        run = worker.trigger_sync(run_type="MANUAL", max_results=max_results)
-        return run.model_dump()
-    except RuntimeError as re:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(re))
-    except Exception as e:
-        logger.exception("Error executing manual email generator run: %s", e)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+@router.post("/email/sync")
+def trigger_email_generator_sync(max_results: int = 25):
+    """Trigger an immediate manual sync run of the Email Event Generator asynchronously."""
+    master = get_master_daily_worker()
+    run = master.email_worker.trigger_run_async(run_type="MANUAL", max_results=max_results)
+    return {
+        "run": run.model_dump(),
+        "summary_message": "Email perception sync started in background.",
+    }
 
 
 @router.get("/email/events")
@@ -316,8 +455,8 @@ def submit_email_event_feedback(
     event_repo: EventRepository = Depends(get_event_repo),
     gen_run_repo: GeneratorRunRepository = Depends(get_gen_run_repo),
 ):
-    """Accept user feedback on a generated event:
-    1. If REMOVED: delete the incorrect event from the ledger.
+    """Accept user feedback on a generated event or facility closure:
+    1. If REMOVED: delete the incorrect event from the ledger (or closure from resource_closures).
     2. If MODIFIED: update the event title, time, or amount.
     3. If user_correction_reason is provided: automatically record a new LearnedPromptRule
        that is injected into the LLM system prompt on all subsequent runs.
@@ -329,28 +468,72 @@ def submit_email_event_feedback(
             detail="Status must be one of: ACCEPTED, MODIFIED, REMOVED",
         )
 
-    # 1. Handle REMOVAL of incorrect event
+    # Share the underlying SQLite connection across repositories to prevent pool starvation
+    shared_conn = getattr(event_repo, "conn", None) or getattr(gen_run_repo, "conn", None)
+    place_repo = PlaceRepository(shared_conn) if shared_conn else None
+
+    # 1. Handle REMOVAL of incorrect event or facility closure
     if clean_status == "REMOVED":
-        event_repo.delete_event(payload.event_id)
+        event_title = None
+        target_run_id = payload.run_id
+
+        if payload.event_id and payload.event_id.startswith("cls_"):
+            if place_repo:
+                place_repo.delete_closure(payload.event_id)
+        elif payload.event_id:
+            evt = event_repo.get_event(payload.event_id)
+            if evt:
+                event_title = evt.title
+                if not target_run_id and evt.generator_run_id:
+                    target_run_id = evt.generator_run_id
+                event_repo.delete_event(payload.event_id)
+
+        # Update run stats if applicable
+        if target_run_id:
+            run = gen_run_repo.get_run(target_run_id)
+            if run:
+                run.created_count = max(0, run.created_count - 1)
+                if run.details_json:
+                    try:
+                        d = json.loads(run.details_json)
+                        d["created_count"] = run.created_count
+                        d["summary_message"] = (
+                            f"Scanned {run.scanned_count} incoming emails via Gmail API. "
+                            f"Generated {run.created_count} events into the life ledger."
+                        )
+                        run.details_json = json.dumps(d)
+                    except Exception:
+                        pass
+                gen_run_repo.update_run(run)
+
+        # Append what happened to the previous run's feedback record
+        user_reason = (payload.user_correction_reason or "").strip()
+        event_label = f"'{event_title}'" if event_title else f"'{payload.event_id}'"
+        action_note = f"Deleted event {event_label}" + (f" with prompt reason: '{user_reason}'" if user_reason else " by user.")
+
         gen_run_repo.update_feedback_status(
             event_id=payload.event_id,
             status="REMOVED",
-            user_reason=payload.user_correction_reason,
+            user_reason=action_note,
+            append_reason=True,
+            feedback_id=payload.feedback_id,
+            run_id=target_run_id,
         )
 
     # 2. Handle MODIFICATION of event
     elif clean_status == "MODIFIED":
-        evt = event_repo.get_event(payload.event_id)
-        if evt:
-            if payload.modified_title:
-                evt.title = payload.modified_title
-            if payload.modified_scheduled_at:
-                try:
-                    evt.scheduled_at = datetime.fromisoformat(payload.modified_scheduled_at)
-                    evt.scheduled_end_at = evt.scheduled_at
-                except Exception:
-                    pass
-            event_repo.update_event(evt)
+        if payload.event_id and not payload.event_id.startswith("cls_"):
+            evt = event_repo.get_event(payload.event_id)
+            if evt:
+                if payload.modified_title:
+                    evt.title = payload.modified_title
+                if payload.modified_scheduled_at:
+                    try:
+                        evt.scheduled_at = datetime.fromisoformat(payload.modified_scheduled_at)
+                        evt.scheduled_end_at = evt.scheduled_at
+                    except Exception:
+                        pass
+                event_repo.update_event(evt)
         gen_run_repo.update_feedback_status(
             event_id=payload.event_id,
             status="MODIFIED",

@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS events (
     
     -- Place Relationship & Geolocation
     place_id TEXT REFERENCES places(id) ON DELETE SET NULL,
+    studio TEXT,
     latitude REAL,
     longitude REAL,
     
@@ -67,6 +68,7 @@ CREATE TABLE IF NOT EXISTS events (
     -- Source & Ingestion Audit
     source TEXT NOT NULL DEFAULT 'MANUAL', -- 'MANUAL', 'QUICK_PRESET', 'RECEIPT_OCR', 'AGENT_GMAIL', 'AGENT_YMCA'
     source_reference_id TEXT,             -- e.g. file_hash, email_msg_id, or template_id
+    generator_run_id TEXT REFERENCES generator_runs(id) ON DELETE SET NULL,
     
     -- Soft-Conflict Tolerance
     has_conflict BOOLEAN DEFAULT FALSE,
@@ -86,6 +88,7 @@ CREATE INDEX IF NOT EXISTS idx_events_completed ON events(completed_at);
 CREATE INDEX IF NOT EXISTS idx_events_place ON events(place_id);
 CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
 CREATE INDEX IF NOT EXISTS idx_events_has_conflict ON events(has_conflict);
+CREATE INDEX IF NOT EXISTS idx_events_generator_run_id ON events(generator_run_id);
 
 -- =========================================================================
 -- 3.1 EVENT GENERATORS (Recurring Rule Engine for Annual / Periodic Obligations)
