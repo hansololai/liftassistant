@@ -32,6 +32,7 @@ interface Props {
   events: EventItem[];
   onSaveQuickEvent: (event: Partial<EventItem>) => void;
   onSnapReceipt: (intent: SnapIntent, details?: Partial<EventItem>) => void;
+  onUploadReceipt?: (file: File) => Promise<void> | void;
   onNavigateTab?: (tab: any) => void;
   onSelectEvent?: (event: EventItem) => void;
   onToggleComplete?: (eventId: string) => void;
@@ -42,6 +43,7 @@ export const TodayOverview: React.FC<Props> = ({
   events,
   onSaveQuickEvent,
   onSnapReceipt,
+  onUploadReceipt,
   onNavigateTab,
   onSelectEvent,
   onToggleComplete,
@@ -84,10 +86,11 @@ export const TodayOverview: React.FC<Props> = ({
       // Exclude long multi-day/distant deadline obligations from today's timeline
       if (isLongDeadlineEvent(e)) return false;
 
-      // Include if scheduled today or completed today
+      // Include if scheduled today, completed today, or ingested/created today
       const isSchedToday = isTargetDate(e.scheduled_at);
       const isCompletedToday = isTargetDate(e.completed_at);
-      return isSchedToday || isCompletedToday;
+      const isCreatedToday = isTargetDate(e.created_at);
+      return isSchedToday || isCompletedToday || isCreatedToday;
     })
     .sort((a, b) => {
       const timeA = new Date(a.scheduled_at || a.completed_at || 0).getTime();
@@ -201,6 +204,7 @@ export const TodayOverview: React.FC<Props> = ({
         templates={templates}
         onSaveQuickEvent={onSaveQuickEvent}
         onSnapReceipt={onSnapReceipt}
+        onUploadReceipt={onUploadReceipt}
       />
 
       {/* 3. Today's Timeline (Scheduled and completed activities today) */}

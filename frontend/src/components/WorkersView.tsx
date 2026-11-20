@@ -13,7 +13,6 @@ import {
   Divider,
   Modal,
   Table,
-  Tabs,
   SegmentedControl,
   ActionIcon,
   Tooltip,
@@ -21,10 +20,6 @@ import {
   Alert,
   ScrollArea,
   Code,
-  FileButton,
-  Checkbox,
-  NumberInput,
-  Select,
   Textarea,
 } from '@mantine/core';
 import {
@@ -41,15 +36,11 @@ import {
   IconRefresh,
   IconPlayerPlay,
   IconHistory,
-  IconCamera,
-  IconUpload,
   IconRotateClockwise,
   IconInfoCircle,
-  IconReceipt,
-  IconBuildingStore,
-  IconSparkles,
   IconEye,
   IconFileCode,
+  IconSparkles,
   IconExternalLink,
   IconCalendar,
   IconTrash,
@@ -58,73 +49,17 @@ import { apiClient } from '../api/client';
 import {
   EmailWorkerStatus,
   GeneratorRunItem,
-  ReceiptJob,
-  ProductItem,
-  StoreItemMultiplier,
-  ProductUnitConversion,
-  ExtractedLineItem,
 } from '../types';
-import { MOCK_STORE_ITEM_MULTIPLIERS } from '../mockData';
-import { CreateProductModal } from './CreateProductModal';
 
 interface Props {
-  jobs?: ReceiptJob[];
-  products?: ProductItem[];
-  multipliers?: StoreItemMultiplier[];
-  onUploadReceipt?: (filename: string, type?: 'PHOTO' | 'JSON' | 'PDF' | 'CSV') => void;
-  onConfirmJob?: (job: ReceiptJob, people: string[], updatePantry: boolean) => void;
-  onCreateProduct?: (product: ProductItem, conversion: ProductUnitConversion) => void;
-  onUpsertMultiplier?: (store: string, item: string, multiplier: number, productId?: string) => void;
   onSelectEvent?: (event: any) => void;
   onRefreshEvents?: () => Promise<void> | void;
 }
 
 export const WorkersView: React.FC<Props> = ({
-  jobs = [],
-  products = [],
-  multipliers = MOCK_STORE_ITEM_MULTIPLIERS,
-  onUploadReceipt,
-  onConfirmJob,
-  onCreateProduct,
-  onUpsertMultiplier,
   onSelectEvent,
   onRefreshEvents,
 }) => {
-  const [activeTab, setActiveTabState] = useState<'workers' | 'receipts'>(() => {
-    if (typeof window !== 'undefined') {
-      const parts = window.location.hash.replace(/^#\/?/, '').toLowerCase().split('/');
-      if (parts[0] === 'workers' && parts[1] === 'receipts') {
-        return 'receipts';
-      }
-    }
-    return 'workers';
-  });
-
-  const setActiveTab = (val: 'workers' | 'receipts') => {
-    setActiveTabState(val);
-    if (typeof window !== 'undefined') {
-      const newHash = val === 'receipts' ? '#/workers/receipts' : '#/workers';
-      if (window.location.hash !== newHash) {
-        window.history.replaceState(null, '', newHash);
-      }
-    }
-  };
-
-  useEffect(() => {
-    const handleHash = () => {
-      const parts = window.location.hash.replace(/^#\/?/, '').toLowerCase().split('/');
-      if (parts[0] === 'workers') {
-        if (parts[1] === 'receipts') {
-          setActiveTabState('receipts');
-        } else {
-          setActiveTabState('workers');
-        }
-      }
-    };
-    window.addEventListener('hashchange', handleHash);
-    return () => window.removeEventListener('hashchange', handleHash);
-  }, []);
-
   // Worker Orchestration & Runs State
   const [workerStatus, setWorkerStatus] = useState<EmailWorkerStatus | null>(null);
   const [runs, setRuns] = useState<GeneratorRunItem[]>([]);
@@ -144,17 +79,6 @@ export const WorkersView: React.FC<Props> = ({
   const [selectedEventForRemove, setSelectedEventForRemove] = useState<{ id: string; title: string } | null>(null);
   const [removeReason, setRemoveReason] = useState('');
   const [isRemovingEvent, setIsRemovingEvent] = useState(false);
-
-  // Manual Receipt State (Approach 2 Ingestion)
-  const [activeUpload, setActiveUpload] = useState(false);
-  const [selectedJobForReview, setSelectedJobForReview] = useState<ReceiptJob | null>(null);
-  const [selectedPeople, setSelectedPeople] = useState<string[]>(['Family']);
-  const [updatePantry, setUpdatePantry] = useState(true);
-  const [createProductModalOpened, setCreateProductModalOpened] = useState(false);
-  const [selectedItemForCreate, setSelectedItemForCreate] = useState<{
-    item: ExtractedLineItem;
-    index: number;
-  } | null>(null);
 
   const fetchWorkerData = async () => {
     setIsLoading(true);
@@ -500,81 +424,8 @@ export const WorkersView: React.FC<Props> = ({
 
   const hasFailedWorkers = [calWorker, emailWorker, facilityWorker, depletionWorker].some((w) => w.status === 'FAILED');
 
-  // Manual Receipt handlers
-  const handleFileChosen = (file: File | null, type: 'PHOTO' | 'JSON' | 'PDF' | 'CSV') => {
-    if (!file || !onUploadReceipt) return;
-    setActiveUpload(true);
-    setTimeout(() => {
-      setActiveUpload(false);
-      onUploadReceipt(file.name, type);
-    }, 400);
-  };
-
-  const handleOpenReview = (job: ReceiptJob) => {
-    const store = job.result?.merchant_name || 'Costco Wholesale';
-    const updatedLineItems = job.result?.line_items?.map((item) => {
-      const matched =
-        multipliers.find(
-          (m) =>
-            m.store.toLowerCase().includes(store.toLowerCase().slice(0, 6)) &&
-            m.item.toLowerCase() === item.name.toLowerCase()
-        ) ||
-        multipliers.find((m) => m.item.toLowerCase() === item.name.toLowerCase());
-
-      if (!item.grocy_product_id && matched?.product_id) {
-        return {
-          ...item,
-          grocy_product_id: matched.product_id,
-          grocy_product_name: matched.product_name || item.name,
-          unit_multiplier: matched.multiplier ?? 1.0,
-          to_create_stock: false,
-        };
-      }
-
-      const defaultMult = matched?.multiplier ?? item.unit_multiplier ?? 1.0;
-      return {
-        ...item,
-        to_create_stock: item.to_create_stock ?? (!item.grocy_product_id && item.total_price >= 0),
-        unit_multiplier: item.unit_multiplier ?? defaultMult,
-      };
-    });
-
-    setSelectedJobForReview({
-      ...job,
-      result: job.result ? { ...job.result, line_items: updatedLineItems } : undefined,
-    });
-    setSelectedPeople(['Family']);
-    setUpdatePantry(true);
-  };
-
   return (
     <Stack gap="md">
-      {/* Top Navigation Switch: Worker Processes vs Manual Receipts */}
-      <Tabs value={activeTab} onChange={(v) => setActiveTab((v as 'workers' | 'receipts') || 'workers')}>
-        <Tabs.List>
-          <Tabs.Tab value="workers" leftSection={<IconCpu size={16} />}>
-            <Group gap="xs">
-              <Text fw={700}>Worker Processes & Automation</Text>
-              {hasFailedWorkers && (
-                <Badge size="xs" color="red" variant="filled">
-                  Issues Detected
-                </Badge>
-              )}
-            </Group>
-          </Tabs.Tab>
-          <Tabs.Tab value="receipts" leftSection={<IconReceipt size={16} />}>
-            <Group gap="xs">
-              <Text fw={600}>Manual Receipt Ingestion</Text>
-              {jobs.length > 0 && (
-                <Badge size="xs" color="blue" variant="light">
-                  {jobs.length}
-                </Badge>
-              )}
-            </Group>
-          </Tabs.Tab>
-        </Tabs.List>
-      </Tabs>
-
       {statusMessage && (
         <Alert
           color={statusMessage.type === 'error' ? 'red' : statusMessage.type === 'success' ? 'green' : 'blue'}
@@ -587,12 +438,10 @@ export const WorkersView: React.FC<Props> = ({
         </Alert>
       )}
 
-      {activeTab === 'workers' ? (
-        <Stack gap="md">
-          {/* ============================================================ */}
-          {/* 1. MASTER DAILY ORCHESTRATOR BANNER                          */}
-          {/* ============================================================ */}
-          <Card withBorder radius="md" p="md" bg="indigo.0" style={{ borderColor: 'var(--mantine-color-indigo-2)' }}>
+      {/* ============================================================ */}
+      {/* 1. MASTER DAILY ORCHESTRATOR BANNER                          */}
+      {/* ============================================================ */}
+      <Card withBorder radius="md" p="md" bg="indigo.0" style={{ borderColor: 'var(--mantine-color-indigo-2)' }}>
             <Group justify="space-between" align="center" wrap="wrap" gap="md">
               <Box>
                 <Group gap="xs" mb={4}>
@@ -1093,101 +942,6 @@ export const WorkersView: React.FC<Props> = ({
               </ScrollArea>
             )}
           </Card>
-        </Stack>
-      ) : (
-        /* ============================================================ */
-        /* MANUAL RECEIPT INGESTION (Approach 2 CAS Upload & Review)    */
-        /* ============================================================ */
-        <Stack gap="md">
-          <Card withBorder radius="md" p="md" bg="blue.0" style={{ borderColor: 'var(--mantine-color-blue-3)' }}>
-            <Text fw={800} size="md" c="blue.9" mb={2}>
-              Omnichannel CAS Receipt Ingestion
-            </Text>
-            <Text size="xs" c="dark.3" mb="md">
-              Approach 2: Content-Addressable Storage (CAS) with SHA-256 deduplication and async background processing. Review and confirm results before committing to the ledger.
-            </Text>
-
-            <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
-              <FileButton accept="image/*" onChange={(file) => handleFileChosen(file, 'PHOTO')}>
-                {(props) => (
-                  <Button {...props} size="sm" color="blue" leftSection={<IconCamera size={16} />} loading={activeUpload}>
-                    Snap Photo
-                  </Button>
-                )}
-              </FileButton>
-
-              <FileButton accept=".json,application/json" onChange={(file) => handleFileChosen(file, 'JSON')}>
-                {(props) => (
-                  <Button {...props} size="sm" color="indigo" variant="light" leftSection={<IconUpload size={16} />} loading={activeUpload}>
-                    Upload JSON
-                  </Button>
-                )}
-              </FileButton>
-
-              <FileButton accept="application/pdf" onChange={(file) => handleFileChosen(file, 'PDF')}>
-                {(props) => (
-                  <Button {...props} size="sm" color="cyan" variant="light" leftSection={<IconUpload size={16} />} loading={activeUpload}>
-                    Upload PDF
-                  </Button>
-                )}
-              </FileButton>
-
-              <FileButton accept=".csv,text/csv" onChange={(file) => handleFileChosen(file, 'CSV')}>
-                {(props) => (
-                  <Button {...props} size="sm" color="teal" variant="light" leftSection={<IconUpload size={16} />} loading={activeUpload}>
-                    Upload CSV
-                  </Button>
-                )}
-              </FileButton>
-            </SimpleGrid>
-          </Card>
-
-          {jobs.length === 0 ? (
-            <Paper withBorder p="xl" style={{ textAlign: 'center' }}>
-              <IconReceipt size={32} color="#adb5bd" style={{ margin: '0 auto 8px auto' }} />
-              <Text size="sm" c="dimmed">
-                No receipts manually ingested yet. Email Worker automatically ingests electronic receipts; use the buttons above to manually upload paper receipts or Costco JSON archives.
-              </Text>
-            </Paper>
-          ) : (
-            <Stack gap="sm">
-              {jobs.map((job) => (
-                <Card key={job.job_id} withBorder radius="md" p="sm">
-                  <Group justify="space-between" align="center">
-                    <Box>
-                      <Group gap="xs">
-                        <Text size="sm" fw={700}>
-                          {job.filename}
-                        </Text>
-                        <Badge size="xs" color={job.status === 'COMPLETED' ? 'teal' : 'blue'}>
-                          {job.status}
-                        </Badge>
-                        {job.is_confirmed && (
-                          <Badge size="xs" color="gray" variant="outline">
-                            Confirmed
-                          </Badge>
-                        )}
-                      </Group>
-                      {job.result && (
-                        <Text size="xs" c="dimmed" mt={2}>
-                          {job.result.merchant_name} &bull; ${job.result.total_amount?.toFixed(2)} &bull;{' '}
-                          {job.result.line_items_count} items
-                        </Text>
-                      )}
-                    </Box>
-
-                    {job.result && !job.is_confirmed && (
-                      <Button size="xs" variant="light" color="blue" onClick={() => handleOpenReview(job)}>
-                        Review & Confirm
-                      </Button>
-                    )}
-                  </Group>
-                </Card>
-              ))}
-            </Stack>
-          )}
-        </Stack>
-      )}
 
       {/* Inspect Run Details Modal with Full Event Traceability */}
       <Modal
@@ -1843,88 +1597,7 @@ export const WorkersView: React.FC<Props> = ({
         )}
       </Modal>
 
-      {/* Line Item Review Modal (Approach 2 Ingestion) */}
-      {selectedJobForReview && selectedJobForReview.result && (
-        <Modal
-          opened={!!selectedJobForReview}
-          onClose={() => setSelectedJobForReview(null)}
-          title={`Confirm Receipt: ${selectedJobForReview.result.merchant_name}`}
-          size="xl"
-        >
-          <Stack gap="md">
-            <Group justify="space-between">
-              <Text size="sm">
-                Total: <strong>${selectedJobForReview.result.total_amount?.toFixed(2)}</strong> ({selectedJobForReview.result.line_items?.length || 0} line items)
-              </Text>
-              <Checkbox
-                label="Directly restock pantry inventory"
-                checked={updatePantry}
-                onChange={(e) => setUpdatePantry(e.currentTarget.checked)}
-              />
-            </Group>
-
-            <ScrollArea h={320}>
-              <Table striped highlightOnHover verticalSpacing="xs">
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Item</Table.Th>
-                    <Table.Th>Price</Table.Th>
-                    <Table.Th>Pantry Stock</Table.Th>
-                    <Table.Th>Pack Multiplier</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {selectedJobForReview.result.line_items?.map((item, idx) => (
-                    <Table.Tr key={idx}>
-                      <Table.Td>
-                        <Text size="xs" fw={600}>
-                          {item.name}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="xs">${item.total_price?.toFixed(2)}</Text>
-                      </Table.Td>
-                      <Table.Td>
-                        {item.grocy_product_name ? (
-                          <Badge size="xs" color="teal">
-                            {item.grocy_product_name}
-                          </Badge>
-                        ) : (
-                          <Badge size="xs" color="gray" variant="outline">
-                            Unlinked
-                          </Badge>
-                        )}
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="xs">{item.unit_multiplier || 1.0}x</Text>
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </ScrollArea>
-
-            <Group justify="flex-end">
-              <Button variant="default" onClick={() => setSelectedJobForReview(null)}>
-                Cancel
-              </Button>
-              <Button
-                color="blue"
-                onClick={() => {
-                  if (onConfirmJob) {
-                    onConfirmJob(selectedJobForReview, selectedPeople, updatePantry);
-                  }
-                  setSelectedJobForReview(null);
-                }}
-              >
-                Confirm & Commit
-              </Button>
-            </Group>
-          </Stack>
-        </Modal>
-      )}
-
-      {/* Mark Incorrect / Remove Event & Teach AI Modal */}
+      {/* Mark Incorrect / Remove Event & Teach AI Prompt Modal */}
       <Modal
         opened={!!selectedEventForRemove}
         onClose={() => setSelectedEventForRemove(null)}
@@ -1973,19 +1646,6 @@ export const WorkersView: React.FC<Props> = ({
           </Group>
         </Stack>
       </Modal>
-
-      {/* Create Product Modal */}
-      <CreateProductModal
-        opened={createProductModalOpened}
-        onClose={() => setCreateProductModalOpened(false)}
-        initialData={{ name: selectedItemForCreate?.item.name || '' }}
-        onSave={(newProd, newConv) => {
-          if (onCreateProduct) {
-            onCreateProduct(newProd, newConv);
-          }
-          setCreateProductModalOpened(false);
-        }}
-      />
     </Stack>
   );
 };

@@ -70,7 +70,7 @@ class ReceiptService:
                 receipt.mime_type,
                 receipt.merchant_name,
                 receipt.merchant_address,
-                receipt.transaction_time.isoformat() if receipt.transaction_time else datetime.now().isoformat(),
+                receipt.transaction_time.isoformat() if receipt.transaction_time else None,
                 receipt.subtotal,
                 receipt.tax_amount,
                 receipt.tip_amount,
@@ -150,7 +150,7 @@ class ReceiptService:
             (
                 receipt.place_id,
                 receipt.tax_amount,
-                receipt.transaction_time.isoformat() if receipt.transaction_time else datetime.now().isoformat(),
+                receipt.transaction_time.isoformat() if receipt.transaction_time else None,
                 receipt.event_id,
             ),
         )

@@ -80,6 +80,7 @@ export function normalizeEventFromApi(raw: any): EventItem {
     latitude: evt.latitude !== undefined && evt.latitude !== null ? Number(evt.latitude) : undefined,
     longitude: evt.longitude !== undefined && evt.longitude !== null ? Number(evt.longitude) : undefined,
     completed_at: evt.completed_at || undefined,
+    created_at: evt.created_at || undefined,
   };
 }
 
@@ -479,6 +480,39 @@ export const apiClient = {
     effective_prompt: string;
   }> {
     return requestJson('/generators/email/prompt');
+  },
+
+  /** Upload a receipt file (image, PDF, JSON, text) to parse and create an event.
+   * Only creates the event if parsing succeeds; throws error otherwise.
+   */
+  async uploadReceipt(file: File): Promise<{
+    success: boolean;
+    message: string;
+    event: EventItem;
+    receipt: any;
+    job: any;
+  }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await requestJson<{
+      success: boolean;
+      message: string;
+      event: any;
+      receipt: any;
+      job: any;
+    }>('/ingest/upload', {
+      method: 'POST',
+      body: formData,
+    });
+    return {
+      ...res,
+      event: normalizeEventFromApi(res.event),
+    };
+  },
+
+  /** List all ingestion worker jobs and historical ingested receipts. */
+  async getIngestionJobs(): Promise<any[]> {
+    return requestJson<any[]>('/ingest/jobs');
   },
 };
 

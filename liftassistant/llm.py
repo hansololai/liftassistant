@@ -27,6 +27,8 @@ def call_llm(
     # Remove 'ollama/' prefix if present for direct Ollama API calls
     clean_model = selected_model.replace("ollama/", "")
     selected_base_url = (base_url or settings.llm_base_url).rstrip("/")
+    if "localhost:11434" in selected_base_url:
+        selected_base_url = selected_base_url.replace("localhost:11434", "127.0.0.1:11434")
 
     # If provider is Ollama or base_url contains localhost:11434, use Ollama native endpoint
     if "11434" in selected_base_url or settings.llm_provider == "ollama":
@@ -106,6 +108,8 @@ def call_vision_llm(
     selected_model = model or settings.llm_model
     clean_model = selected_model.replace("ollama/", "")
     selected_base_url = (base_url or settings.llm_base_url).rstrip("/")
+    if "localhost:11434" in selected_base_url:
+        selected_base_url = selected_base_url.replace("localhost:11434", "127.0.0.1:11434")
 
     # 1. Native Ollama vision API
     if "11434" in selected_base_url or settings.llm_provider == "ollama":

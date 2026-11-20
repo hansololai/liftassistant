@@ -23,6 +23,7 @@ export interface EventItem {
   duration_minutes?: number;
   deadline?: string;
   completed_at?: string;
+  created_at?: string;
   place_id?: string;
   studio?: string;
   latitude?: number;
@@ -42,7 +43,15 @@ export interface EventItem {
   };
   shopping_details?: {
     store_name?: string;
+    merchant_name?: string;
+    merchant_address?: string;
+    receipt_id?: string;
+    receipt_image_path?: string;
+    receipt_file_url?: string;
+    original_filename?: string;
     pantry_updated?: boolean;
+    subtotal?: number;
+    tax_amount?: number;
     total_amount?: number;
     line_items?: any[];
   };

@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     llm_provider: str = Field("ollama", description="ollama | deepseek | openai | gemini")
     llm_model: str = Field("ollama/deepseek-r1:14b", description="LiteLLM model string")
     llm_api_key: str = Field("", description="API key (not needed for Ollama)")
-    llm_base_url: str = Field("http://localhost:11434", description="Ollama base URL")
+    llm_base_url: str = Field("http://127.0.0.1:11434", description="Ollama base URL")
 
     # ── Gmail ───────────────────────────────────────────────────────────────
     gmail_credentials_file: str = Field("credentials.json")

@@ -20,12 +20,14 @@ import {
   Divider,
   SegmentedControl,
   Checkbox,
+  FileButton,
 } from '@mantine/core';
 import {
   IconPlus,
   IconDots,
   IconCheck,
   IconCamera,
+  IconUpload,
   IconClock,
   IconUser,
   IconMapPin,
@@ -46,12 +48,14 @@ interface Props {
   templates: QuickTemplate[];
   onSaveQuickEvent: (event: Partial<EventItem>) => void;
   onSnapReceipt: (intent: SnapIntent, details?: Partial<EventItem>) => void;
+  onUploadReceipt?: (file: File) => Promise<void> | void;
 }
 
 export const QuickActionBar: React.FC<Props> = ({
   templates,
   onSaveQuickEvent,
   onSnapReceipt,
+  onUploadReceipt,
 }) => {
   const [drawerOpened, setDrawerOpened] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<QuickTemplate | null>(null);
@@ -59,6 +63,17 @@ export const QuickActionBar: React.FC<Props> = ({
   const [smartIntakeOpened, setSmartIntakeOpened] = useState(false);
   const [simpleModalOpened, setSimpleModalOpened] = useState(false);
   const [simpleTemplate, setSimpleTemplate] = useState<QuickTemplate | null>(null);
+  const [isUploadingReceipt, setIsUploadingReceipt] = useState(false);
+
+  const handleFileChosen = async (file: File | null) => {
+    if (!file || !onUploadReceipt) return;
+    setIsUploadingReceipt(true);
+    try {
+      await onUploadReceipt(file);
+    } finally {
+      setIsUploadingReceipt(false);
+    }
+  };
 
   // Helper to get formatted local datetime string: YYYY-MM-DDTHH:mm
   const formatDatetimeLocal = (date: Date) => {
@@ -316,9 +331,50 @@ export const QuickActionBar: React.FC<Props> = ({
   return (
     <>
       <Card withBorder radius="md" p="xs" bg="gray.0">
-        <Text size="xs" fw={700} c="dimmed" tt="uppercase" mb={6}>
-          ⚡ Quick Action Presets
-        </Text>
+        <Group justify="space-between" align="center" mb={6} wrap="wrap" gap="xs">
+          <Text size="xs" fw={700} c="dimmed" tt="uppercase">
+            ⚡ Quick Actions
+          </Text>
+          <Group gap={6}>
+            <FileButton
+              accept="image/*"
+              capture="environment"
+              onChange={handleFileChosen}
+            >
+              {(props) => (
+                <Button
+                  {...props}
+                  size="compact-xs"
+                  color="blue"
+                  variant="light"
+                  radius="md"
+                  leftSection={<IconCamera size={13} />}
+                  loading={isUploadingReceipt}
+                >
+                  Camera
+                </Button>
+              )}
+            </FileButton>
+            <FileButton
+              accept="image/*,.json,.pdf,.csv,application/json,application/pdf,text/csv"
+              onChange={handleFileChosen}
+            >
+              {(props) => (
+                <Button
+                  {...props}
+                  size="compact-xs"
+                  color="indigo"
+                  variant="light"
+                  radius="md"
+                  leftSection={<IconUpload size={13} />}
+                  loading={isUploadingReceipt}
+                >
+                  Upload Receipt
+                </Button>
+              )}
+            </FileButton>
+          </Group>
+        </Group>
 
         {/* Non-scrollable Mobile Grid: Exactly Marcus Pooped, Dining, Shopping, Dog walk */}
         <SimpleGrid cols={{ base: 2, xs: 4 }} spacing={6}>

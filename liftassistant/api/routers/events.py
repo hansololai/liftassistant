@@ -4,9 +4,11 @@ Validates incoming requests and delegates all business logic to EventManager.
 
 import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ValidationError
 from liftassistant.api.deps import get_event_manager
 from liftassistant.services.event_manager import EventManager
@@ -343,6 +345,38 @@ def get_event(
     if not evt:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Event '{event_id}' not found")
     return _format_event_response(evt)
+
+
+@router.get("/{event_id}/receipt/file")
+def get_event_receipt_file(
+    event_id: str,
+    event_manager: EventManager = Depends(get_event_manager),
+):
+    """Serve the original receipt image, document, or JSON file for an event."""
+    evt = event_manager.get_event(event_id)
+    if not evt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Event '{event_id}' not found")
+    if not evt.shopping_detail:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No shopping/receipt details for this event")
+
+    file_path = evt.shopping_detail.receipt_image_path
+    if not file_path or not Path(file_path).exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receipt file not found on disk")
+
+    p = Path(file_path)
+    media_types = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".pdf": "application/pdf",
+        ".json": "application/json",
+        ".txt": "text/plain",
+        ".csv": "text/csv",
+    }
+    media_type = media_types.get(p.suffix.lower(), "application/octet-stream")
+    filename = evt.shopping_detail.original_filename or p.name
+    return FileResponse(path=str(p), media_type=media_type, filename=filename)
 
 
 @router.put("/{event_id}")

@@ -16,19 +16,17 @@ import {
 import {
   IconAlertTriangle,
   IconShoppingCart,
-  IconSparkles,
   IconCheck,
   IconX,
   IconBell,
   IconConfetti,
 } from '@tabler/icons-react';
-import { ConflictItem, DepletionProposal, ReceiptJob } from '../types';
+import { ConflictItem, DepletionProposal } from '../types';
 import { ConflictTriageCenter } from './ConflictTriageCenter';
 
 interface Props {
   conflicts: ConflictItem[];
   depletions: DepletionProposal[];
-  jobs: ReceiptJob[];
   onResolveConflict: (id: string) => void;
   onRescheduleConflict: (id: string) => void;
   onConfirmDepletion: (id: string) => void;
@@ -40,7 +38,6 @@ interface Props {
 export const NotificationsView: React.FC<Props> = ({
   conflicts,
   depletions,
-  jobs,
   onResolveConflict,
   onRescheduleConflict,
   onConfirmDepletion,
@@ -48,8 +45,7 @@ export const NotificationsView: React.FC<Props> = ({
   onRecheckConflicts,
   isRecheckingConflicts = false,
 }) => {
-  const activeJobs = jobs.filter((j) => j.status === 'PROCESSING' || j.status === 'PENDING');
-  const totalUnresolved = conflicts.length + depletions.length + activeJobs.length;
+  const totalUnresolved = conflicts.length + depletions.length;
   const [activeTab, setActiveTab] = useState<string | null>('all');
 
   return (
@@ -94,7 +90,7 @@ export const NotificationsView: React.FC<Props> = ({
             🎉 All Caught Up!
           </Text>
           <Text size="xs" c="dimmed" mt={4} maw={380} mx="auto">
-            Zero pending conflicts, no pantry depletions waiting at the Confirmation Gate, and all background extraction jobs are complete.
+            Zero pending conflicts and no pantry depletions waiting at the Confirmation Gate.
           </Text>
         </Card>
       )}
@@ -129,18 +125,6 @@ export const NotificationsView: React.FC<Props> = ({
               }
             >
               Pantry Gate
-            </Tabs.Tab>
-            <Tabs.Tab
-              value="worker"
-              rightSection={
-                activeJobs.length > 0 ? (
-                  <Badge size="xs" color="indigo" variant="filled" circle>
-                    {activeJobs.length}
-                  </Badge>
-                ) : null
-              }
-            >
-              Worker Jobs
             </Tabs.Tab>
           </Tabs.List>
 
@@ -229,43 +213,6 @@ export const NotificationsView: React.FC<Props> = ({
                 </Box>
               )}
 
-              {/* Active Worker Jobs Section */}
-              {activeJobs.length > 0 && (
-                <Box>
-                  <Text size="xs" fw={700} c="dimmed" tt="uppercase" mb="xs">
-                    ⚡ Active Async Worker Jobs ({activeJobs.length})
-                  </Text>
-                  <Card withBorder radius="md" p="sm" bg="indigo.0">
-                    <Group justify="space-between" mb="xs">
-                      <Group gap="xs">
-                        <ThemeIcon color="indigo" size="sm" radius="xl">
-                          <IconSparkles size={14} />
-                        </ThemeIcon>
-                        <Text size="xs" fw={700} c="indigo.9">
-                          Ingestion Worker in Progress
-                        </Text>
-                      </Group>
-                      <Badge size="xs" color="indigo">HTTP 202 Running</Badge>
-                    </Group>
-                    {activeJobs.map((job) => (
-                      <Paper key={job.job_id} p="xs" radius="sm" withBorder bg="white" mb="xs">
-                        <Group justify="space-between" mb={4}>
-                          <Text size="xs" fw={600}>
-                            {job.filename}
-                          </Text>
-                          <Badge size="xs" color="indigo" variant="light">
-                            {job.progress_pct}%
-                          </Badge>
-                        </Group>
-                        <Progress value={job.progress_pct} color="indigo" size="sm" animated />
-                        <Text size="11px" c="dimmed" mt={4}>
-                          {job.progress_message}
-                        </Text>
-                      </Paper>
-                    ))}
-                  </Card>
-                </Box>
-              )}
             </Stack>
           </Tabs.Panel>
 
@@ -324,34 +271,6 @@ export const NotificationsView: React.FC<Props> = ({
             ) : (
               <Paper p="md" withBorder radius="md" bg="gray.0" style={{ textAlign: 'center' }}>
                 <Text size="xs" c="dimmed">No pantry depletions waiting at the Confirmation Gate.</Text>
-              </Paper>
-            )}
-          </Tabs.Panel>
-
-          {/* Tab 4: Worker Jobs Only */}
-          <Tabs.Panel value="worker">
-            {activeJobs.length > 0 ? (
-              <Stack gap="xs">
-                {activeJobs.map((job) => (
-                  <Paper key={job.job_id} p="sm" radius="md" withBorder bg="white">
-                    <Group justify="space-between" mb={4}>
-                      <Text size="sm" fw={600}>
-                        {job.filename}
-                      </Text>
-                      <Badge size="xs" color="indigo">
-                        {job.progress_pct}%
-                      </Badge>
-                    </Group>
-                    <Progress value={job.progress_pct} color="indigo" size="sm" animated />
-                    <Text size="xs" c="dimmed" mt={4}>
-                      {job.progress_message}
-                    </Text>
-                  </Paper>
-                ))}
-              </Stack>
-            ) : (
-              <Paper p="md" withBorder radius="md" bg="gray.0" style={{ textAlign: 'center' }}>
-                <Text size="xs" c="dimmed">No background ingestion jobs currently running.</Text>
               </Paper>
             )}
           </Tabs.Panel>

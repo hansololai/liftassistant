@@ -23,6 +23,9 @@ import {
   Textarea,
   Rating,
   Loader,
+  Image,
+  Collapse,
+  ThemeIcon,
 } from '@mantine/core';
 import {
   IconShoppingCart,
@@ -45,6 +48,10 @@ import {
   IconWoman,
   IconMoodKid,
   IconUsers,
+  IconEye,
+  IconEyeOff,
+  IconExternalLink,
+  IconPhoto,
 } from '@tabler/icons-react';
 import { apiClient, ConflictCheckResult } from '../api/client';
 import {
@@ -105,6 +112,7 @@ export const EventModal: React.FC<Props> = ({
   const [subtotal, setSubtotal] = useState<number>(0);
   const [tax, setTax] = useState<number>(0);
   const [total, setTotal] = useState<number>(0);
+  const [showReceiptImage, setShowReceiptImage] = useState(true);
 
   // Initialize modal state when opened or event/job changes
   useEffect(() => {
@@ -205,14 +213,14 @@ export const EventModal: React.FC<Props> = ({
         0;
 
       if (event.shopping_details) {
-        setTotal(existingAmt);
-        setSubtotal(existingAmt);
-        setTax(0);
+        setTotal(event.shopping_details.total_amount ?? existingAmt);
+        setSubtotal(event.shopping_details.subtotal ?? event.shopping_details.total_amount ?? existingAmt);
+        setTax(event.shopping_details.tax_amount ?? (event as any).tax_amount ?? 0);
 
         const sItems = event.shopping_details.line_items || [];
         setLineItems(
           sItems.map((it: any) => ({
-            name: it.name || it.product_name || 'Item',
+            name: it.name || it.clean_name || it.product_name || 'Item',
             quantity: it.quantity || 1,
             unit: it.unit || 'unit',
             unit_price: it.unit_price || 0,
@@ -227,14 +235,14 @@ export const EventModal: React.FC<Props> = ({
         setLineItems([]);
         setTotal(existingAmt);
         setSubtotal(existingAmt);
-        setTax(0);
+        setTax((event as any)?.tax_amount ?? 0);
       }
     }
   }, [opened, event, receiptJob, multipliers]);
 
-  // Lazy load full event if opened with a stub event object missing details
+  // Lazy load full event if opened with a stub event object missing details or line items
   useEffect(() => {
-    if (opened && event?.id && !event.shopping_details && !event.dining_details && !(event as any).total_amount) {
+    if (opened && event?.id && (event.event_type === 'SHOPPING' || !event.shopping_details || !event.shopping_details.line_items || event.shopping_details.line_items.length === 0)) {
       apiClient
         .getEvent(event.id)
         .then((fullEvt) => {
@@ -251,14 +259,36 @@ export const EventModal: React.FC<Props> = ({
                 setScheduledAt(`${y}-${m}-${day}T${h}:${min}`);
               } catch {}
             }
-            const amt =
-              fullEvt.dining_details?.total_amount ??
-              fullEvt.shopping_details?.total_amount ??
-              (fullEvt as any).total_amount ??
-              0;
-            if (amt > 0) {
-              setTotal(amt);
-              setSubtotal(amt);
+            if (fullEvt.shopping_details) {
+              const sDetails = fullEvt.shopping_details;
+              const sTotal = sDetails.total_amount ?? (fullEvt as any).total_amount ?? 0;
+              setTotal(sTotal);
+              setSubtotal(sDetails.subtotal ?? sTotal);
+              setTax(sDetails.tax_amount ?? (fullEvt as any).tax_amount ?? 0);
+              if (sDetails.line_items && sDetails.line_items.length > 0) {
+                setLineItems(
+                  sDetails.line_items.map((it: any) => ({
+                    name: it.name || it.clean_name || it.product_name || 'Item',
+                    quantity: it.quantity || 1,
+                    unit: it.unit || 'unit',
+                    unit_price: it.unit_price || 0,
+                    total_price: it.total_price || (it.quantity || 1) * (it.unit_price || 0),
+                    grocy_product_id: it.grocy_product_id,
+                    grocy_product_name: it.grocy_product_name,
+                    unit_multiplier: it.unit_multiplier || 1.0,
+                    to_create_stock: false,
+                  }))
+                );
+              }
+            } else {
+              const amt =
+                fullEvt.dining_details?.total_amount ??
+                (fullEvt as any).total_amount ??
+                0;
+              if (amt > 0) {
+                setTotal(amt);
+                setSubtotal(amt);
+              }
             }
             if (fullEvt.people_involved && fullEvt.people_involved.length > 0) {
               setSelectedPeople(fullEvt.people_involved);
@@ -346,6 +376,15 @@ export const EventModal: React.FC<Props> = ({
     event?.completed_at ||
     event?.scheduled_at ||
     new Date().toISOString();
+
+  // Receipt info
+  const receiptFileUrl =
+    event?.shopping_details?.receipt_file_url ||
+    (event?.shopping_details?.receipt_image_path && event?.id ? `/api/v1/events/${event.id}/receipt/file` : undefined);
+  const receiptFileName =
+    receiptJob?.filename ||
+    event?.shopping_details?.original_filename ||
+    (event?.shopping_details?.receipt_image_path ? event.shopping_details.receipt_image_path.split(/[/\\\\]/).pop() : undefined);
 
   // Handlers for shopping line items
   const handleToggleCreateStock = (index: number, checked: boolean) => {
@@ -450,9 +489,9 @@ export const EventModal: React.FC<Props> = ({
           <Box>
             <Group gap="xs" align="center">
               <Text fw={700} size="md">
-                {isConfirmingReceipt ? 'Review & Confirm Shopping Event' : 'Event Details'}
+                {isConfirmingReceipt ? 'Review & Confirm Shopping Event' : isShopping ? 'Shopping Event & Receipt' : 'Event Details'}
               </Text>
-              <Badge color="blue" size="xs" variant="light">
+              <Badge color={isShopping ? 'teal' : 'blue'} size="xs" variant="light">
                 {eventType}
               </Badge>
               {isConfirmingReceipt ? (
@@ -462,6 +501,11 @@ export const EventModal: React.FC<Props> = ({
               ) : (
                 <Badge color="teal" size="xs" variant="light">
                   ✓ Recorded on Ledger
+                </Badge>
+              )}
+              {isShopping && (receiptFileUrl || event?.shopping_details?.receipt_id) && (
+                <Badge color="cyan" size="xs" variant="light" leftSection={<IconReceipt size={11} />}>
+                  Receipt Grounded
                 </Badge>
               )}
             </Group>
@@ -529,11 +573,11 @@ export const EventModal: React.FC<Props> = ({
               </Text>
             </Group>
 
-            {receiptJob?.filename && (
+            {receiptFileName && (
               <Group gap={6}>
                 <IconFileCode size={15} color="var(--mantine-color-teal-7)" />
                 <Text size="xs" c="dimmed" truncate>
-                  Source: <strong>{receiptJob.filename}</strong>
+                  Receipt File: <strong>{receiptFileName}</strong>
                 </Text>
               </Group>
             )}
@@ -543,6 +587,74 @@ export const EventModal: React.FC<Props> = ({
         {/* 2. Shopping Receipt View (Financials & Extracted Line Items) */}
         {isShopping && (
           <Stack gap="sm">
+            {/* Receipt Image / Document Preview */}
+            {receiptFileUrl && (
+              <Paper p="xs" withBorder radius="sm" bg="gray.0">
+                <Group justify="space-between" align="center" mb={showReceiptImage ? 6 : 0}>
+                  <Group gap="xs">
+                    <ThemeIcon color="teal" variant="light" size="sm">
+                      <IconReceipt size={14} />
+                    </ThemeIcon>
+                    <Box>
+                      <Text fw={600} size="xs">
+                        Original Receipt Document
+                      </Text>
+                      {receiptFileName && (
+                        <Text size="10px" c="dimmed">
+                          {receiptFileName}
+                        </Text>
+                      )}
+                    </Box>
+                  </Group>
+                  <Group gap={6}>
+                    <Button
+                      variant="subtle"
+                      size="compact-xs"
+                      color="teal"
+                      leftSection={showReceiptImage ? <IconEyeOff size={13} /> : <IconEye size={13} />}
+                      onClick={() => setShowReceiptImage(!showReceiptImage)}
+                    >
+                      {showReceiptImage ? 'Hide Photo' : 'View Photo'}
+                    </Button>
+                    <ActionIcon
+                      component="a"
+                      href={receiptFileUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      size="sm"
+                      variant="light"
+                      color="teal"
+                      title="Open full receipt in new tab"
+                    >
+                      <IconExternalLink size={14} />
+                    </ActionIcon>
+                  </Group>
+                </Group>
+
+                <Collapse in={showReceiptImage}>
+                  <Box
+                    mt="xs"
+                    p="xs"
+                    style={{
+                      borderRadius: 6,
+                      backgroundColor: '#fff',
+                      border: '1px solid var(--mantine-color-gray-3)',
+                      textAlign: 'center',
+                    }}
+                  >
+                    <Image
+                      src={receiptFileUrl}
+                      alt="Receipt Document"
+                      radius="sm"
+                      mah={280}
+                      fit="contain"
+                      fallbackSrc="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 24 24'><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-size='10' fill='%23999'>Receipt Preview</text></svg>"
+                    />
+                  </Box>
+                </Collapse>
+              </Paper>
+            )}
+
             {/* Financial Summary */}
             <SimpleGrid cols={3} spacing="xs">
               <Paper p="xs" withBorder radius="sm" ta="center">
@@ -566,7 +678,7 @@ export const EventModal: React.FC<Props> = ({
             </SimpleGrid>
 
             {/* Extracted Line Items Table */}
-            {lineItems.length > 0 && (
+            {lineItems.length > 0 ? (
               <Box>
                 <Group justify="space-between" mb={4}>
                   <Text fw={700} size="xs" c="dimmed">
@@ -692,6 +804,12 @@ export const EventModal: React.FC<Props> = ({
                   </Table>
                 </ScrollArea.Autosize>
               </Box>
+            ) : (
+              <Paper p="xs" withBorder radius="sm" bg="gray.0" ta="center">
+                <Text size="xs" c="dimmed">
+                  No individual line items parsed for this shopping trip.
+                </Text>
+              </Paper>
             )}
 
             {/* Pantry Stock Replenishment Option */}

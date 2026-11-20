@@ -22,7 +22,6 @@ from liftassistant.services.cas_storage import CASStorage
 from liftassistant.services.conflict_engine import ConflictEngine
 from liftassistant.services.facility_provider import YmcaScheduleProvider
 from liftassistant.services.map_service import MapService
-from liftassistant.api.routers.ingest import register_ingestion_job
 
 logger = logging.getLogger(__name__)
 
@@ -323,6 +322,7 @@ class EventManager:
 
         saved = self._evaluate_conflicts_and_persist(new_event, check_conflicts=check_conflicts)
 
+        from liftassistant.api.routers.ingest import register_ingestion_job
         job = register_ingestion_job(
             filename=stored["original_filename"],
             file_hash=stored["file_hash"],

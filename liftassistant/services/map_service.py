@@ -55,6 +55,14 @@ class MapService:
         if not self.place_repo:
             raise RuntimeError("PlaceRepository is required to persist places.")
 
+        # Re-use existing place if address matches an already grounded place
+        addr_clean = address.strip().lower()
+        street_prefix = address.split(",")[0].strip().lower()
+        existing_places = self.place_repo.list_places(search=street_prefix, limit=5)
+        for ep in existing_places:
+            if ep.address and (street_prefix in ep.address.lower() or ep.address.lower() in addr_clean):
+                return ep
+
         resolved_map_url = map_url
         if not resolved_map_url and latitude is not None and longitude is not None:
             resolved_map_url = f"https://www.google.com/maps/search/?api=1&query={latitude},{longitude}"

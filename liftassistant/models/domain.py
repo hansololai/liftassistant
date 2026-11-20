@@ -1,7 +1,7 @@
 """LiftAssistant 3.0 Domain Models (Pydantic v2)."""
 
 from datetime import date, datetime
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 from pydantic import BaseModel, Field
 
@@ -54,9 +54,18 @@ class DiningDetail(BaseModel):
 class ShoppingDetail(BaseModel):
     event_id: str = ""
     event_type: str = "SHOPPING"
+    store_name: Optional[str] = None
+    merchant_name: Optional[str] = None
+    merchant_address: Optional[str] = None
+    receipt_id: Optional[str] = None
     receipt_image_path: Optional[str] = None
+    receipt_file_url: Optional[str] = None
+    original_filename: Optional[str] = None
     pantry_updated: bool = False
+    subtotal: Optional[float] = None
+    tax_amount: Optional[float] = None
     total_amount: float = 0.0
+    line_items: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class MaintenanceDetail(BaseModel):
@@ -322,7 +331,7 @@ class StandardizedReceipt(BaseModel):
     file_size_bytes: Optional[int] = None
     merchant_name: str
     merchant_address: Optional[str] = None
-    transaction_time: datetime = Field(default_factory=datetime.now)
+    transaction_time: Optional[datetime] = None
     subtotal: Optional[float] = 0.0
     tax_amount: float = 0.0
     tip_amount: float = 0.0

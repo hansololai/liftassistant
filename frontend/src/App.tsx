@@ -23,6 +23,7 @@ import {
   IconSparkles,
   IconBell,
   IconCpu,
+  IconAlertTriangle,
 } from '@tabler/icons-react';
 import {
   MOCK_CONFLICTS,
@@ -159,7 +160,7 @@ export default function App() {
   const [generators, setGenerators] = useState<EventGeneratorItem[]>(MOCK_GENERATORS);
   const [shoppingList, setShoppingList] = useState<ShoppingListItem[]>(MOCK_SHOPPING_LIST);
   const [jobs, setJobs] = useState<ReceiptJob[]>(MOCK_RECEIPT_JOBS);
-  const [notification, setNotification] = useState<string | null>(null);
+  const [notification, setNotification] = useState<{ message: string; type?: 'success' | 'error' | 'info'; title?: string } | string | null>(null);
   const [selectedEventForModal, setSelectedEventForModal] = useState<EventItem | null>(null);
   const [isRecheckingConflicts, setIsRecheckingConflicts] = useState(false);
 
@@ -247,14 +248,63 @@ export default function App() {
     }
   }, []);
 
+  const refreshJobs = useCallback(async () => {
+    try {
+      const serverJobs = await apiClient.getIngestionJobs();
+      if (serverJobs && serverJobs.length > 0) {
+        setJobs(serverJobs);
+      }
+    } catch (err) {
+      console.warn('Could not load receipt jobs from API, keeping mock/local state:', err);
+    }
+  }, []);
+
   useEffect(() => {
     if (authenticated) {
       void refreshPlaces();
       void refreshEvents();
       void refreshMultipliers();
       void refreshConflicts();
+      void refreshJobs();
     }
-  }, [authenticated, refreshPlaces, refreshEvents, refreshMultipliers, refreshConflicts]);
+  }, [authenticated, refreshPlaces, refreshEvents, refreshMultipliers, refreshConflicts, refreshJobs]);
+
+  const handleUploadReceiptFile = async (file: File) => {
+    try {
+      showNotification({
+        type: 'info',
+        title: 'Analyzing Receipt',
+        message: `Uploading "${file.name}" to vision LLM...`,
+      });
+      const res = await apiClient.uploadReceipt(file);
+      if (res.event) {
+        setEvents((prev) => [res.event, ...prev.filter((e) => e.id !== res.event.id)]);
+      }
+      if (res.job) {
+        setJobs((prev) => [res.job, ...prev.filter((j) => j.job_id !== res.job.job_id)]);
+      }
+      void refreshEvents();
+      void refreshJobs();
+
+      const evtTitle = res.event?.title || 'Receipt';
+      const amount = res.event?.shopping_details?.total_amount ?? res.event?.dining_details?.total_amount ?? 0;
+      const amountStr = amount > 0 ? ` ($${amount.toFixed(2)})` : '';
+
+      showNotification({
+        type: 'success',
+        title: 'Receipt Successfully Logged!',
+        message: `✨ Event "${evtTitle}"${amountStr} created on ledger!`,
+      });
+    } catch (err: any) {
+      console.error('Receipt upload failed:', err);
+      showNotification({
+        type: 'error',
+        title: 'Receipt Upload Failed',
+        message: `❌ ${err.message || 'Receipt parsing failed. Event was NOT created.'}`,
+      });
+      void refreshJobs();
+    }
+  };
 
   const handleUpsertMultiplier = (store: string, item: string, multiplier: number, productId?: string) => {
     const prod = products.find((p) => p.id === productId);
@@ -283,13 +333,12 @@ export default function App() {
     });
   };
 
-  // Unresolved items requiring user attention
-  const activeJobs = jobs.filter((j) => j.status === 'PROCESSING' || j.status === 'PENDING');
-  const unresolvedCount = conflicts.length + depletions.length + activeJobs.length;
+  // Unresolved items requiring user attention (Conflicts & Confirmation Gate)
+  const unresolvedCount = conflicts.length + depletions.length;
 
-  const showNotification = (msg: string) => {
+  const showNotification = (msg: string | { message: string; type?: 'success' | 'error' | 'info'; title?: string }) => {
     setNotification(msg);
-    setTimeout(() => setNotification(null), 3500);
+    setTimeout(() => setNotification(null), 5500);
   };
 
   // Conflict Actions
@@ -1042,19 +1091,51 @@ export default function App() {
         {/* Main Content Area */}
         <AppShell.Main style={{ paddingBottom: 'calc(84px + env(safe-area-inset-bottom, 0px))' }}>
           <Container size="sm" p="xs">
-            {/* Transient Action Notification */}
-            {notification && (
-              <Box mb="sm">
-                <Notification
-                  icon={<IconCheck size={18} />}
-                  color="teal"
-                  title="Action Logged"
-                  onClose={() => setNotification(null)}
-                >
-                  {notification}
-                </Notification>
-              </Box>
-            )}
+        {/* Floating Transient Action Notification (Always in View regardless of scroll) */}
+        {notification && (
+          <Box
+            style={{
+              position: 'fixed',
+              top: 'calc(68px + env(safe-area-inset-top, 0px))',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              width: 'calc(100% - 32px)',
+              maxWidth: 480,
+              zIndex: 99999,
+              boxShadow: '0 8px 28px rgba(0,0,0,0.22)',
+            }}
+          >
+            <Notification
+              icon={
+                typeof notification === 'object' && notification.type === 'error' ? (
+                  <IconAlertTriangle size={18} />
+                ) : typeof notification === 'object' && notification.type === 'info' ? (
+                  <IconSparkles size={18} />
+                ) : (
+                  <IconCheck size={18} />
+                )
+              }
+              color={
+                typeof notification === 'object' && notification.type === 'error'
+                  ? 'red'
+                  : typeof notification === 'object' && notification.type === 'info'
+                  ? 'blue'
+                  : 'teal'
+              }
+              title={
+                typeof notification === 'object' && notification.title
+                  ? notification.title
+                  : typeof notification === 'object' && notification.type === 'error'
+                  ? 'Notice'
+                  : 'Action Logged'
+              }
+              withCloseButton
+              onClose={() => setNotification(null)}
+            >
+              {typeof notification === 'object' ? notification.message : notification}
+            </Notification>
+          </Box>
+        )}
 
             {activeTab === 'today' && (
               <TodayOverview
@@ -1062,6 +1143,7 @@ export default function App() {
                 events={events}
                 onSaveQuickEvent={handleSaveQuickEvent}
                 onSnapReceipt={handleSnapReceipt}
+                onUploadReceipt={handleUploadReceiptFile}
                 onNavigateTab={setActiveTab}
                 onSelectEvent={setSelectedEventForModal}
                 onToggleComplete={handleToggleComplete}
@@ -1072,7 +1154,6 @@ export default function App() {
               <NotificationsView
                 conflicts={conflicts}
                 depletions={depletions}
-                jobs={jobs}
                 onResolveConflict={handleResolveConflict}
                 onRescheduleConflict={handleRescheduleConflict}
                 onConfirmDepletion={handleConfirmDepletion}
@@ -1113,13 +1194,6 @@ export default function App() {
 
             {activeTab === 'workers' && (
               <WorkersView
-                jobs={jobs}
-                products={products}
-                multipliers={multipliers}
-                onUploadReceipt={(name, type) => handleSnapReceipt('SHOPPING', undefined, name, type)}
-                onConfirmJob={handleConfirmReceiptJob}
-                onCreateProduct={handleCreateProduct}
-                onUpsertMultiplier={handleUpsertMultiplier}
                 onSelectEvent={setSelectedEventForModal}
                 onRefreshEvents={refreshEvents}
               />

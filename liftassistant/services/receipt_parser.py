@@ -175,6 +175,24 @@ class ReceiptParser:
             except Exception as e:
                 logger.warning("JSON parsing failed, falling back to text: %s", e)
 
+        # Handle PDF files using PyMuPDF (fitz) or pdfplumber
+        if path.suffix.lower() == ".pdf":
+            try:
+                import fitz
+                doc = fitz.open(path)
+                pdf_text = "\n".join([page.get_text() for page in doc])
+                doc.close()
+                if pdf_text.strip():
+                    return [self.parse_from_text(
+                        raw_text=pdf_text,
+                        file_hash=computed_hash,
+                        file_path=str(path),
+                        original_filename=path.name,
+                        source_channel=source_channel or "PDF_INVOICE",
+                    )]
+            except Exception as e:
+                logger.warning("PDF extraction failed: %s", e)
+
         try:
             text = content_bytes.decode("utf-8")
         except UnicodeDecodeError:
@@ -211,6 +229,23 @@ class ReceiptParser:
         except Exception:
             upright_bytes = img_bytes
 
+        # Helper to extract capture time from EXIF metadata
+        def _get_exif_capture_time(img_path: Path) -> Optional[datetime]:
+            try:
+                from PIL import Image
+                from dateutil import parser as dt_parser
+                with Image.open(img_path) as im:
+                    exif = im.getexif()
+                    if exif:
+                        for tag_id in (36867, 306, 36868):  # DateTimeOriginal, DateTime, DateTimeDigitized
+                            val = exif.get(tag_id)
+                            if val:
+                                cleaned = str(val).replace(":", "-", 2)
+                                return dt_parser.parse(cleaned, fuzzy=True).replace(tzinfo=None)
+            except Exception:
+                pass
+            return None
+
         # Step 2: Attempt Multimodal Vision LLM extraction
         prompt = (
             "You are an expert receipt parser. Extract all structured details from this receipt image. "
@@ -218,14 +253,18 @@ class ReceiptParser:
             "{\n"
             '  "merchant_name": string,\n'
             '  "merchant_address": string,\n'
-            '  "transaction_time": string (YYYY-MM-DD HH:MM:SS or YYYY-MM-DD HH:MM),\n'
+            '  "transaction_time": string (e.g. "YYYY-MM-DD HH:MM:SS" or "Month DD, YYYY HH:MM:SS AM/PM" or date as shown on receipt),\n'
             '  "subtotal": float,\n'
             '  "tax_amount": float,\n'
             '  "total_amount": float,\n'
             '  "line_items": [\n'
             '    {"name": string, "quantity": float, "unit_price": float, "total_price": float}\n'
             "  ]\n"
-            "}"
+            "}\n"
+            "Look carefully across the header, footer, terminal info, register timestamps, and barcodes for the date and time. "
+            "If only date is visible, include the date.\n"
+            "CRITICAL: 'total_amount' MUST be the exact final bottom-line amount charged/paid by the customer (Grand Total / Total / Amount Paid). "
+            "Do NOT add tax to total_amount if tax is already included or if discounts apply."
         )
 
         try:
@@ -233,7 +272,7 @@ class ReceiptParser:
             if llm_res:
                 data = json.loads(llm_res)
                 if isinstance(data, dict) and ("merchant_name" in data or "total_amount" in data or "line_items" in data or "items" in data):
-                    return self._parse_generic_json(
+                    receipt = self._parse_generic_json(
                         receipt_dict=data,
                         raw_payload=data,
                         file_hash=file_hash,
@@ -241,18 +280,28 @@ class ReceiptParser:
                         original_filename=path.name,
                         source_channel="VISION_LLM",
                     )
+                    if receipt.transaction_time is None:
+                        receipt.transaction_time = _get_exif_capture_time(path)
+                    if receipt.transaction_time is None and source_channel in ("PHOTO_CAMERA", "CAMERA"):
+                        receipt.transaction_time = datetime.now()
+                    return receipt
         except Exception as e:
             logger.info("Vision LLM parsing unavailable or bypassed (%s), falling back to OCR", e)
 
         # Step 3: Fallback to OCR text parsing
         ocr_text = extract_text_from_receipt_image(path)
-        return self.parse_from_text(
+        receipt = self.parse_from_text(
             raw_text=ocr_text,
             file_hash=file_hash,
             file_path=str(path),
             original_filename=path.name,
             source_channel=source_channel,
         )
+        if receipt.transaction_time is None:
+            receipt.transaction_time = _get_exif_capture_time(path)
+        if receipt.transaction_time is None and source_channel in ("PHOTO_CAMERA", "CAMERA"):
+            receipt.transaction_time = datetime.now()
+        return receipt
 
     def parse_from_json(
         self,
@@ -367,18 +416,22 @@ class ReceiptParser:
                 break
 
         # 2. Transaction Time
-        tx_time = datetime.now()
+        tx_time: Optional[datetime] = None
         tx_str = (
             receipt_dict.get("transactionDateTime")
             or receipt_dict.get("transactionDateISO")
             or receipt_dict.get("transactionDate")
         )
-        if tx_str:
+        if tx_str and str(tx_str).lower() not in ("null", "none", "unknown", ""):
             try:
-                dt = datetime.fromisoformat(str(tx_str).replace("Z", "+00:00"))
-                tx_time = dt.replace(tzinfo=None)
+                from dateutil import parser as dt_parser
+                tx_time = dt_parser.parse(str(tx_str), fuzzy=True).replace(tzinfo=None)
             except Exception:
-                pass
+                try:
+                    dt = datetime.fromisoformat(str(tx_str).replace("Z", "+00:00"))
+                    tx_time = dt.replace(tzinfo=None)
+                except Exception:
+                    tx_time = None
 
         # 3. Totals
         total_amount = float(receipt_dict.get("total") or 0.0)
@@ -524,25 +577,20 @@ class ReceiptParser:
                 product_id=matched_pid,
             ))
 
-        tx_time = datetime.now()
+        tx_time: Optional[datetime] = None
         tx_str = receipt_dict.get("transaction_time") or receipt_dict.get("date") or receipt_dict.get("datetime")
-        if tx_str:
+        if tx_str and str(tx_str).lower() not in ("null", "none", "unknown", ""):
             try:
-                cleaned_str = str(tx_str).replace("/", "-").strip()
-                if "T" in cleaned_str:
-                    tx_time = datetime.fromisoformat(cleaned_str.replace("Z", "+00:00")).replace(tzinfo=None)
-                else:
-                    parts = cleaned_str.split(" ")
-                    d_parts = list(map(int, parts[0].split("-")))
-                    if len(d_parts) == 3:
-                        y, m, d = (d_parts[0], d_parts[1], d_parts[2]) if d_parts[0] > 1000 else (d_parts[2], d_parts[0], d_parts[1])
-                        th, tm = 12, 0
-                        if len(parts) > 1 and ":" in parts[1]:
-                            t_parts = list(map(int, parts[1].split(":")[:2]))
-                            th, tm = t_parts[0], t_parts[1]
-                        tx_time = datetime(y, m, d, th, tm)
+                from dateutil import parser as dt_parser
+                parsed = dt_parser.parse(str(tx_str), fuzzy=True)
+                tx_time = parsed.replace(tzinfo=None)
             except Exception:
-                pass
+                try:
+                    cleaned_str = str(tx_str).replace("/", "-").strip()
+                    if "T" in cleaned_str:
+                        tx_time = datetime.fromisoformat(cleaned_str.replace("Z", "+00:00")).replace(tzinfo=None)
+                except Exception:
+                    tx_time = None
 
         ref_id = (
             receipt_dict.get("source_reference_id")
@@ -551,7 +599,8 @@ class ReceiptParser:
             or receipt_dict.get("id")
         )
         if not ref_id:
-            ref_id = f"{merchant_name.strip().lower()}_{tx_time.isoformat()}_{total_amount:.2f}"
+            time_part = tx_time.isoformat() if tx_time else datetime.now().isoformat()
+            ref_id = f"{merchant_name.strip().lower()}_{time_part}_{total_amount:.2f}"
 
         return StandardizedReceipt(
             event_id=None,
@@ -622,21 +671,27 @@ class ReceiptParser:
             merchant_name = lines[0][:40]
 
         # 1.5 Date & Time Extraction
-        tx_time = datetime.now()
-        date_match = re.search(r"(\d{1,2}/\d{1,2}/\d{2,4})", raw_text)
-        time_match = re.search(r"(\d{1,2}:\d{2})", raw_text)
-        if date_match:
-            try:
-                date_str = date_match.group(1)
-                time_str = time_match.group(1) if time_match else "12:00"
-                parts = date_str.split("/")
-                m, d, y = int(parts[0]), int(parts[1]), int(parts[2])
-                if y < 100:
-                    y += 2000
-                th, tm = map(int, time_str.split(":"))
-                tx_time = datetime(y, m, d, th, tm)
-            except Exception:
-                pass
+        tx_time: Optional[datetime] = None
+        date_patterns = [
+            r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b",
+            r"\b(\d{4}[/-]\d{1,2}[/-]\d{1,2})\b",
+            r"\b((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2},? \d{2,4})\b",
+            r"\b(\d{1,2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{2,4})\b",
+        ]
+        time_match = re.search(r"(\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM|am|pm)?)", raw_text)
+        time_str = time_match.group(1).strip() if time_match else ""
+
+        for pat in date_patterns:
+            dm = re.search(pat, raw_text, re.IGNORECASE)
+            if dm:
+                candidate = f"{dm.group(1)} {time_str}".strip()
+                try:
+                    from dateutil import parser as dt_parser
+                    parsed = dt_parser.parse(candidate, fuzzy=True)
+                    tx_time = parsed.replace(tzinfo=None)
+                    break
+                except Exception:
+                    pass
 
         # 2. Financial Totals Extraction
         total_amount = 0.0

@@ -74,7 +74,7 @@ def create_app() -> FastAPI:
             "/api/v1/auth/enroll",
             "/api/v1/auth/status",
         }
-        if path in EXEMPT_PATHS:
+        if path in EXEMPT_PATHS or path.endswith("/receipt/file"):
             return await call_next(request)
 
         # Allow OPTIONS pre-flight requests from CORS

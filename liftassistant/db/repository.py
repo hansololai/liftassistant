@@ -143,6 +143,9 @@ class EventRepository:
         maintenance: Optional[MaintenanceDetail] = None,
     ) -> LifeEvent:
         """Create base event and insert matching polymorphic extension table row."""
+        if not event.title or not event.title.strip():
+            raise ValueError("Event title cannot be null or empty.")
+
         cursor = self.conn.cursor()
 
         # Fallback to detail objects embedded on the event model
@@ -310,17 +313,71 @@ class EventRepository:
             )
 
         shopping_detail = None
-        if row["event_type"] == "SHOPPING" and (
-            ("s_eid" in row_keys and row["s_eid"] is not None)
-            or ("s_pu" in row_keys and row["s_pu"] is not None)
-            or ("s_total_amount" in row_keys and row["s_total_amount"] is not None)
-        ):
+        if row["event_type"] == "SHOPPING":
+            cursor = self.conn.cursor()
+            rec_row = cursor.execute(
+                "SELECT * FROM receipts WHERE event_id = ? ORDER BY created_at DESC LIMIT 1",
+                (row["id"],),
+            ).fetchone()
+
+            line_items = []
+            rec_id = None
+            orig_filename = None
+            rec_subtotal = None
+            rec_tax = None
+            rec_img_path = row["s_img"] if "s_img" in row_keys else None
+            m_name = None
+            m_addr = None
+
+            if rec_row:
+                rec_id = rec_row["id"]
+                orig_filename = rec_row["original_filename"]
+                rec_subtotal = rec_row["subtotal"]
+                rec_tax = rec_row["tax_amount"]
+                m_name = rec_row["merchant_name"]
+                m_addr = rec_row["merchant_address"]
+                if not rec_img_path:
+                    rec_img_path = rec_row["file_path"]
+
+                items_cursor = cursor.execute(
+                    "SELECT clean_name, quantity, unit, unit_price, total_price, product_id FROM receipt_items WHERE receipt_id = ?",
+                    (rec_id,),
+                )
+                for it in items_cursor.fetchall():
+                    line_items.append({
+                        "name": it["clean_name"],
+                        "quantity": it["quantity"] or 1,
+                        "unit": it["unit"] or "ea",
+                        "unit_price": it["unit_price"] or 0.0,
+                        "total_price": it["total_price"] or 0.0,
+                        "grocy_product_id": it["product_id"],
+                    })
+
+            s_total = (
+                (row["s_total_amount"] if "s_total_amount" in row_keys and row["s_total_amount"] is not None else None)
+                or (rec_row["total_amount"] if rec_row else None)
+                or 0.0
+            )
+
+            pantry_updated = True
+            if "s_pu" in row_keys and row["s_pu"] is not None:
+                pantry_updated = bool(row["s_pu"])
+
             shopping_detail = ShoppingDetail(
                 event_id=row["id"],
                 event_type="SHOPPING",
-                receipt_image_path=row["s_img"],
-                pantry_updated=bool(row["s_pu"]),
-                total_amount=row["s_total_amount"] or 0.0,
+                store_name=m_name or (row["p_name"] if "p_name" in row_keys else None),
+                merchant_name=m_name,
+                merchant_address=m_addr,
+                receipt_id=rec_id,
+                receipt_image_path=rec_img_path,
+                receipt_file_url=f"/api/v1/events/{row['id']}/receipt/file" if rec_img_path else None,
+                original_filename=orig_filename,
+                pantry_updated=pantry_updated,
+                subtotal=rec_subtotal if rec_subtotal is not None else s_total,
+                tax_amount=rec_tax if rec_tax is not None else (row["tax_amount"] if "tax_amount" in row_keys else 0.0),
+                total_amount=s_total,
+                line_items=line_items,
             )
 
         maintenance_detail = None
