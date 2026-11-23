@@ -81,8 +81,8 @@ If private:
 1. Open **Container Manager** on DSM.
 2. Navigate to **Project** in the left sidebar $\to$ Click **Create**.
 3. Configure the Project:
-   - **Project Name**: `liftassistant`
-   - **Path**: Choose `/volume1/docker/liftassistant`
+   - **Project Name**: `lifeassistant`
+   - **Path**: Choose `/volume1/docker/lifeassistant`
    - **Source**: Select **Create docker-compose.yml**
 4. Paste the following configuration:
 
@@ -90,16 +90,16 @@ If private:
 version: "3.8"
 
 services:
-  liftassistant:
-    image: ghcr.io/<YOUR_GITHUB_USERNAME>/liftassistant:latest
-    container_name: liftassistant
+  lifeassistant:
+    image: ghcr.io/hansololai/liftassistant:latest
+    container_name: lifeassistant
     restart: unless-stopped
     ports:
       - "8000:8000"
     volumes:
-      - /volume1/docker/liftassistant/data:/app/data
+      - /volume1/docker/lifeassistant/data:/app/data
     environment:
-      - LIFT_DEVICE_AUTH_ENABLED=true
+      - ENVIRONMENT=prod
       - LLM_PROVIDER=ollama
       - LLM_BASE_URL=http://host.docker.internal:11434
       - LLM_MODEL=ollama/deepseek-r1:14b
@@ -116,14 +116,14 @@ services:
   # Optional: Zero-touch auto-updates via Watchtower
   watchtower:
     image: containrrr/watchtower
-    container_name: watchtower-liftassistant
+    container_name: watchtower-lifeassistant
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - WATCHTOWER_CLEANUP=true
       - WATCHTOWER_POLL_INTERVAL=21600 # Checks every 6 hours
-    command: liftassistant
+    command: lifeassistant
 ```
 
 5. Click **Next** $\to$ Click **Done**.
