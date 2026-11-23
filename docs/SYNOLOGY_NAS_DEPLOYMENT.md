@@ -171,3 +171,40 @@ To access LiftAssistant securely outside your home network and install it as an 
    - Click **Create** $\to$ **WebSocket** (adds `Upgrade` and `Connection` headers for real-time SSE updates).
 4. Click **Save**.
 5. Visit `https://lift.yourfamily.synology.me` on Safari (iOS) or Chrome (Android) $\to$ Tap **Share** $\to$ **Add to Home Screen** to install the PWA.
+
+---
+
+## 📱 Part 5: Family Device Enrollment (Magic Links)
+
+LiftAssistant uses zero-password, cryptographic device authorization. Each physical phone or tablet holds a 10-year session token.
+
+### 1. Enrolling Your First Device (Day 1)
+When the container starts up for the first time, it automatically creates pre-seeded pending devices for **Dad's Phone** and **Mom's Phone**.
+
+You can get your initial magic link in either of two ways:
+- **Option A (Container Manager Log)**:
+  In Synology DSM $\to$ **Container Manager** $\to$ **Containers** $\to$ click `liftassistant` $\to$ **Log**.
+  You will see the enrollment banner:
+  ```text
+  🎉 [LiftAssistant First-Run Device Enrollment Links]
+    📱 Dad's Phone: /?enroll_token=dad_enroll_...
+    📱 Mom's Phone: /?enroll_token=mom_enroll_...
+  ```
+- **Option B (Terminal CLI)**:
+  Run in SSH or DSM terminal:
+  ```bash
+  docker exec liftassistant python -m liftassistant devices
+  ```
+
+Open the link on your phone (e.g. `https://lift.yourdomain.synology.me/?enroll_token=dad_enroll_...`).
+Your phone is now permanently authorized!
+
+---
+
+### 2. Enrolling Additional Devices (Mom, Kids, iPad)
+Once any device is authorized, you **never** need the terminal again:
+1. In the top navigation bar of the LiftAssistant web app, tap the **Key / Mobile icon** (**Manage Authorized Family Devices**).
+2. Tap **+ Add Device** and type a name (e.g., `Mom's iPhone` or `Marcus's iPad`).
+3. Tap **Copy Magic Enrollment Link**.
+4. Send the link via iMessage, WhatsApp, or AirDrop.
+5. When opened on the other device, it authorizes instantly and prompts **Add to Home Screen**.

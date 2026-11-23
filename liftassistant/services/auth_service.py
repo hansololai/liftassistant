@@ -66,6 +66,15 @@ class DeviceAuthService:
                         (dev_id, name, enroll_tok),
                     )
 
+                logger.info(
+                    "\n" + "=" * 70 + "\n"
+                    "🎉 [LiftAssistant First-Run Device Enrollment Links]\n"
+                    f"  📱 Dad's Phone: /?enroll_token={default_devices[0][2]}\n"
+                    f"  📱 Mom's Phone: /?enroll_token={default_devices[1][2]}\n"
+                    "Open the link above on your phone browser to permanently authorize it.\n"
+                    + "=" * 70
+                )
+
     def list_devices(self) -> List[Dict[str, Any]]:
         """List all devices with enrollment and last seen status."""
         with get_db(self.db_path) as conn:

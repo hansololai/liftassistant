@@ -57,14 +57,40 @@ def evaluate_generators():
     conn.close()
 
 
+def manage_devices(add_name: str = None):
+    from liftassistant.services.auth_service import DeviceAuthService
+    auth_service = DeviceAuthService()
+    if add_name:
+        dev = auth_service.create_device(add_name)
+        print(f"\nCreated pending device: '{dev['device_name']}'")
+        print(f"  -> Magic Link: /?enroll_token={dev['enroll_token']}\n")
+        return
+
+    devices = auth_service.list_devices()
+    print("\n" + "=" * 60)
+    print("LiftAssistant Authorized Family Devices:")
+    print("=" * 60)
+    for d in devices:
+        status_str = "REVOKED" if d["is_revoked"] else ("ACTIVE" if d["is_enrolled"] else "PENDING")
+        print(f"[{status_str:7}] {d['device_name']} (id: {d['id']})")
+        if not d["is_enrolled"] and not d["is_revoked"]:
+            print(f"          Magic Link: /?enroll_token={d['enroll_token']}")
+    print("=" * 60 + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description="LiftAssistant 3.0 CLI")
     parser.add_argument(
         "command",
         nargs="?",
         default="seed",
-        choices=["init-db", "seed", "evaluate-generators", "api"],
+        choices=["init-db", "seed", "evaluate-generators", "api", "devices"],
         help="Command to run (default: seed)",
+    )
+    parser.add_argument(
+        "--add",
+        dest="add_device",
+        help="Create a new device by name and generate its enrollment link",
     )
     args = parser.parse_args()
 
@@ -74,6 +100,8 @@ def main():
         seed_db()
     elif args.command == "evaluate-generators":
         evaluate_generators()
+    elif args.command == "devices":
+        manage_devices(args.add_device)
     elif args.command == "api":
         import uvicorn
         logger.info("Starting LiftAssistant 3.0 API Gateway on port 8000...")
