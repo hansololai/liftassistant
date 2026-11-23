@@ -40,7 +40,6 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { ReceiptJob, ExtractedLineItem, ProductItem, ProductUnitConversion, StoreItemMultiplier } from '../types';
-import { MOCK_STORE_ITEM_MULTIPLIERS } from '../mockData';
 import { CreateProductModal } from './CreateProductModal';
 import { EventModal } from './EventModal';
 
@@ -57,7 +56,7 @@ interface Props {
 export const ReceiptsView: React.FC<Props> = ({
   jobs,
   products = [],
-  multipliers = MOCK_STORE_ITEM_MULTIPLIERS,
+  multipliers = [],
   onUploadReceipt,
   onConfirmJob,
   onCreateProduct,

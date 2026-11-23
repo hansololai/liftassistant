@@ -140,9 +140,10 @@ class ReceiptWorker:
                         (receipt.source_reference_id,),
                     ).fetchone()
                 if not existing:
+                    tx_time_str = receipt.transaction_time.isoformat() if receipt.transaction_time else None
                     existing = cursor.execute(
                         "SELECT id FROM receipts WHERE merchant_name = ? AND transaction_time = ? AND total_amount = ?",
-                        (receipt.merchant_name, receipt.transaction_time.isoformat(), receipt.total_amount),
+                        (receipt.merchant_name, tx_time_str, receipt.total_amount),
                     ).fetchone()
 
                 if existing:

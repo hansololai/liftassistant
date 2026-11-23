@@ -489,35 +489,37 @@ export const WorkersView: React.FC<Props> = ({
               {/* Master Control Buttons */}
               <Group gap="xs">
                 <Button
-                  size="sm"
+                  size="xs"
                   color="indigo"
                   variant="filled"
-                  leftSection={<IconPlayerPlay size={16} />}
+                  leftSection={<IconPlayerPlay size={14} />}
                   loading={actionInProgress === 'MASTER'}
                   onClick={handleRunMasterAll}
                 >
-                  Run All (Master)
+                  Run All
                 </Button>
                 <Button
-                  size="sm"
+                  size="xs"
                   color="red"
                   variant={hasFailedWorkers ? 'filled' : 'light'}
-                  leftSection={<IconRotateClockwise size={16} />}
+                  leftSection={<IconRotateClockwise size={14} />}
                   loading={actionInProgress === 'RETRY_FAILED'}
                   onClick={handleRetryFailed}
                 >
                   Retry Failed
                 </Button>
-                <ActionIcon
-                  size="lg"
-                  variant="default"
-                  radius="md"
-                  onClick={fetchWorkerData}
-                  loading={isLoading}
-                  title="Refresh status"
-                >
-                  <IconRefresh size={16} />
-                </ActionIcon>
+                <Tooltip label="Refresh status and execution logs">
+                  <ActionIcon
+                    size="md"
+                    variant="default"
+                    radius="md"
+                    onClick={fetchWorkerData}
+                    loading={isLoading}
+                    aria-label="Refresh status"
+                  >
+                    <IconRefresh size={16} />
+                  </ActionIcon>
+                </Tooltip>
               </Group>
             </Group>
           </Card>

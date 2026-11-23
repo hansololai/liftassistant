@@ -253,14 +253,17 @@ class ReceiptParser:
             "{\n"
             '  "merchant_name": string,\n'
             '  "merchant_address": string,\n'
+            '  "category": "DINING" | "SHOPPING",\n'
             '  "transaction_time": string (e.g. "YYYY-MM-DD HH:MM:SS" or "Month DD, YYYY HH:MM:SS AM/PM" or date as shown on receipt),\n'
             '  "subtotal": float,\n'
             '  "tax_amount": float,\n'
+            '  "tip_amount": float,\n'
             '  "total_amount": float,\n'
             '  "line_items": [\n'
             '    {"name": string, "quantity": float, "unit_price": float, "total_price": float}\n'
             "  ]\n"
             "}\n"
+            "CATEGORY GUIDELINE: Set category to 'DINING' if the merchant is a restaurant, cafe, bar, eatery, diner, fast food, bakery, food truck, or serves prepared meals/drinks; set to 'SHOPPING' for grocery stores, supermarkets, pharmacies, retail stores, gas stations, hardware stores.\n"
             "Look carefully across the header, footer, terminal info, register timestamps, and barcodes for the date and time. "
             "If only date is visible, include the date.\n"
             "CRITICAL: 'total_amount' MUST be the exact final bottom-line amount charged/paid by the customer (Grand Total / Total / Amount Paid). "
@@ -284,6 +287,16 @@ class ReceiptParser:
                         receipt.transaction_time = _get_exif_capture_time(path)
                     if receipt.transaction_time is None and source_channel in ("PHOTO_CAMERA", "CAMERA"):
                         receipt.transaction_time = datetime.now()
+                    elif receipt.transaction_time:
+                        current_year = datetime.now().year
+                        # Correct LLM year hallucination when month & day match today or raw receipt text contains current year
+                        if receipt.transaction_time.year < current_year:
+                            if receipt.transaction_time.month == datetime.now().month and receipt.transaction_time.day == datetime.now().day:
+                                receipt.transaction_time = receipt.transaction_time.replace(year=current_year)
+                            else:
+                                ocr_snippet = extract_text_from_receipt_image(path)
+                                if str(current_year) in ocr_snippet:
+                                    receipt.transaction_time = receipt.transaction_time.replace(year=current_year)
                     return receipt
         except Exception as e:
             logger.info("Vision LLM parsing unavailable or bypassed (%s), falling back to OCR", e)
@@ -602,6 +615,10 @@ class ReceiptParser:
             time_part = tx_time.isoformat() if tx_time else datetime.now().isoformat()
             ref_id = f"{merchant_name.strip().lower()}_{time_part}_{total_amount:.2f}"
 
+        category = str(receipt_dict.get("category", "")).upper() or None
+        if not category and tip_amount > 0.0:
+            category = "DINING"
+
         return StandardizedReceipt(
             event_id=None,
             place_id=place_id,
@@ -616,6 +633,7 @@ class ReceiptParser:
             tip_amount=tip_amount,
             total_amount=total_amount,
             currency="USD",
+            category=category,
             source_channel=source_channel,
             source_reference_id=ref_id,
             raw_ocr_json=json.dumps(raw_payload) if not isinstance(raw_payload, str) else raw_payload,

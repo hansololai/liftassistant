@@ -57,16 +57,18 @@ export const ConflictTriageCenter: React.FC<Props> = ({
           </Group>
           <Group gap="xs">
             {onRecheck && (
-              <Button
-                size="compact-xs"
-                variant="light"
-                color="teal"
-                leftSection={<IconRefresh size={13} />}
-                loading={isRechecking}
-                onClick={onRecheck}
-              >
-                Recheck Schedule & YMCA
-              </Button>
+              <Tooltip label="Recheck schedule & YMCA">
+                <ActionIcon
+                  size="sm"
+                  variant="light"
+                  color="teal"
+                  loading={isRechecking}
+                  onClick={onRecheck}
+                  aria-label="Recheck schedule"
+                >
+                  <IconRefresh size={14} />
+                </ActionIcon>
+              </Tooltip>
             )}
             <Badge color="teal" variant="light">All Clear</Badge>
           </Group>
@@ -119,17 +121,17 @@ export const ConflictTriageCenter: React.FC<Props> = ({
         </Group>
         <Group gap="xs">
           {onRecheck && (
-            <Tooltip label="Recheck YMCA live schedule API and overlapping events" position="bottom" withArrow>
-              <Button
-                size="xs"
+            <Tooltip label="Recheck YMCA schedule & overlapping events" position="bottom" withArrow>
+              <ActionIcon
+                size="sm"
                 variant="white"
                 color="red"
-                leftSection={<IconRefresh size={14} />}
                 loading={isRechecking}
                 onClick={onRecheck}
+                aria-label="Recheck conflicts"
               >
-                Recheck Conflicts
-              </Button>
+                <IconRefresh size={14} />
+              </ActionIcon>
             </Tooltip>
           )}
           <Badge color="red" variant="filled" size="sm">
@@ -177,17 +179,18 @@ export const ConflictTriageCenter: React.FC<Props> = ({
 
               <Group justify="flex-end" gap="xs" mt="sm">
                 {onRecheck && (
-                  <Button
-                    size="compact-xs"
-                    variant="subtle"
-                    color="gray"
-                    leftSection={<IconRefresh size={12} />}
-                    loading={isRechecking}
-                    onClick={onRecheck}
-                    title="Recheck if YMCA updated or other event was rescheduled"
-                  >
-                    Recheck
-                  </Button>
+                  <Tooltip label="Recheck conflict">
+                    <ActionIcon
+                      size="sm"
+                      variant="subtle"
+                      color="gray"
+                      loading={isRechecking}
+                      onClick={onRecheck}
+                      aria-label="Recheck"
+                    >
+                      <IconRefresh size={13} />
+                    </ActionIcon>
+                  </Tooltip>
                 )}
                 <Button
                   size="compact-xs"
@@ -195,7 +198,7 @@ export const ConflictTriageCenter: React.FC<Props> = ({
                   color="gray"
                   onClick={() => onResolve(conflict.id)}
                 >
-                  Acknowledge & Keep
+                  Keep
                 </Button>
                 <Button
                   size="compact-xs"

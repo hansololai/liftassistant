@@ -51,11 +51,26 @@ export const TodayOverview: React.FC<Props> = ({
   const [expandedDeadlines, setExpandedDeadlines] = useState(false);
 
   // Determine current day string in local time (YYYY-MM-DD)
-  const todayDateStr = new Date().toLocaleDateString('en-CA'); // e.g. "2026-11-16"
-  // For demo/mock resilience, also match the mock date if user is playing with mock seeds
+  const now = new Date();
+  const todayDateStr = now.toLocaleDateString('en-CA'); // e.g. "2026-11-21"
+  const dayName = now.toLocaleDateString([], { weekday: 'long' });
+  const dateFormatted = now.toLocaleDateString([], { month: 'short', day: 'numeric' });
+
   const isTargetDate = (dStr?: string) => {
     if (!dStr) return false;
-    return dStr.startsWith(todayDateStr) || dStr.startsWith('2026-11-09');
+    if (dStr.startsWith(todayDateStr)) return true;
+    try {
+      const normalized = dStr.includes('T')
+        ? (dStr.includes('Z') || dStr.includes('+') || dStr.includes('-') ? dStr : `${dStr}Z`)
+        : `${dStr.replace(' ', 'T')}Z`;
+      const d = new Date(normalized);
+      if (!isNaN(d.getTime())) {
+        return d.toLocaleDateString('en-CA') === todayDateStr;
+      }
+    } catch {
+      // Fallback
+    }
+    return false;
   };
 
   // Helper to determine if an event is a long-horizon deadline obligation (e.g. tax return, property tax, inspection)
@@ -86,16 +101,24 @@ export const TodayOverview: React.FC<Props> = ({
       // Exclude long multi-day/distant deadline obligations from today's timeline
       if (isLongDeadlineEvent(e)) return false;
 
-      // Include if scheduled today, completed today, or ingested/created today
+      // Include if scheduled today or completed today
       const isSchedToday = isTargetDate(e.scheduled_at);
       const isCompletedToday = isTargetDate(e.completed_at);
-      const isCreatedToday = isTargetDate(e.created_at);
+      // Only fallback to created_at if the event has neither scheduled_at nor completed_at
+      const isCreatedToday = !e.scheduled_at && !e.completed_at && isTargetDate(e.created_at);
       return isSchedToday || isCompletedToday || isCreatedToday;
     })
     .sort((a, b) => {
-      const timeA = new Date(a.scheduled_at || a.completed_at || 0).getTime();
-      const timeB = new Date(b.scheduled_at || b.completed_at || 0).getTime();
-      return timeA - timeB;
+      const getTimeVal = (e: EventItem) => {
+        if (isTargetDate(e.scheduled_at)) return new Date(e.scheduled_at!).getTime();
+        if (isTargetDate(e.completed_at)) return new Date(e.completed_at!).getTime();
+        if (isTargetDate(e.created_at)) {
+          const t = new Date(e.created_at!).getTime();
+          if (!isNaN(t)) return t;
+        }
+        return new Date(e.scheduled_at || e.completed_at || e.created_at || 0).getTime();
+      };
+      return getTimeVal(a) - getTimeVal(b);
     });
 
   // Today's completed count
@@ -122,19 +145,19 @@ export const TodayOverview: React.FC<Props> = ({
           <Group gap={6} wrap="nowrap" align="center" style={{ overflow: 'hidden' }}>
             <IconSun size={17} color="#1c7ed6" style={{ flexShrink: 0 }} />
             <Text fw={700} size="sm" c="blue.9" truncate>
-              Monday Briefing
+              {dayName} Briefing
             </Text>
             <Text size="xs" c="dimmed" truncate visibleFrom="xs">
-              • Nov 9 • Cranberry (52°F, Partly Cloudy)
+              • {dateFormatted} • Cranberry
             </Text>
           </Group>
           <Badge color="blue" variant="light" size="xs" style={{ flexShrink: 0 }}>
-            52°F • Nov 9
+            {dateFormatted}
           </Badge>
         </Group>
 
         <Text size="xs" c="dark.4" style={{ lineHeight: 1.35 }}>
-          🏊 <b>YMCA Advisory:</b> Warm Water Pool reserved for Aerobics until 5:00 PM. Open Family Swim starts at 5:00 PM.
+          🏊 <b>Schedule Status:</b> {todayScheduledCount > 0 ? `${todayScheduledCount} active event(s) scheduled for today across family members.` : 'All daily commitments are clear for today.'}
         </Text>
 
         {/* 1-Line Expandable Deadline Row inside Morning Briefing */}
@@ -208,7 +231,7 @@ export const TodayOverview: React.FC<Props> = ({
       />
 
       {/* 3. Today's Timeline (Scheduled and completed activities today) */}
-      <Card withBorder radius="md" p="md">
+      <Card withBorder radius="md" p={{ base: 'xs', sm: 'md' }}>
         <Group justify="space-between" mb="sm">
           <Box>
             <Text fw={700} size="sm">

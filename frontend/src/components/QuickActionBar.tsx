@@ -176,7 +176,7 @@ export const QuickActionBar: React.FC<Props> = ({
       return;
     }
 
-    if (tpl.modal_type === 'simple' || tpl.id === 'tpl_diaper' || tpl.id === 'tpl_poop') {
+    if (tpl.modal_type === 'simple' || tpl.id === 'tpl_diaper' || tpl.id === 'tpl_poop' || tpl.id === 'tpl_swimming' || tpl.id === 'tpl_pool') {
       setSimpleTemplate(tpl);
       setDrawerOpened(false);
       setSimpleModalOpened(true);
@@ -274,8 +274,8 @@ export const QuickActionBar: React.FC<Props> = ({
     setSmartIntakeOpened(false);
   };
 
-  // Exactly the 4 requested mobile quick action presets
-  const TARGET_PRESET_IDS = ['tpl_diaper', 'tpl_dining', 'tpl_grocery', 'tpl_dog'];
+  // Mobile quick action presets: Marcus Pooped, Dining, Shopping, Dog walk, Swimming
+  const TARGET_PRESET_IDS = ['tpl_diaper', 'tpl_dining', 'tpl_grocery', 'tpl_dog', 'tpl_swimming'];
 
   const defaultPresets: QuickTemplate[] = [
     {
@@ -321,6 +321,22 @@ export const QuickActionBar: React.FC<Props> = ({
       default_description: 'Neighborhood dog walk',
       pinned: true,
       modal_type: 'simple',
+    },
+    {
+      id: 'tpl_swimming',
+      name: 'Swimming',
+      icon: '🏊',
+      default_category: 'CUSTOM',
+      default_person: 'Marcus',
+      default_people: ['Marcus', 'Dad'],
+      default_duration_minutes: 60,
+      default_description: 'Swimming at Rose E. Schneider Family YMCA (Warm Water Pool)',
+      pinned: true,
+      modal_type: 'simple',
+      default_place: 'Rose E. Schneider Family YMCA',
+      default_place_id: 'pl_ymca',
+      default_studio: 'Warm Water Pool',
+      default_coords: { latitude: 40.7021, longitude: -80.1245 },
     },
   ];
 
@@ -369,15 +385,15 @@ export const QuickActionBar: React.FC<Props> = ({
                   leftSection={<IconUpload size={13} />}
                   loading={isUploadingReceipt}
                 >
-                  Upload Receipt
+                  Upload
                 </Button>
               )}
             </FileButton>
           </Group>
         </Group>
 
-        {/* Non-scrollable Mobile Grid: Exactly Marcus Pooped, Dining, Shopping, Dog walk */}
-        <SimpleGrid cols={{ base: 2, xs: 4 }} spacing={6}>
+        {/* Mobile / Responsive Quick Action Grid */}
+        <SimpleGrid cols={{ base: 2, xs: 3, sm: 5 }} spacing={6}>
           {presets.map((tpl) => (
             <Button
               key={tpl.id}
@@ -403,6 +419,8 @@ export const QuickActionBar: React.FC<Props> = ({
                   ? 'Shopping'
                   : tpl.id === 'tpl_dog'
                   ? 'Dog walk'
+                  : tpl.id === 'tpl_swimming' || tpl.id === 'tpl_pool'
+                  ? 'Swimming'
                   : tpl.name}
               </Text>
             </Button>
@@ -542,12 +560,12 @@ export const QuickActionBar: React.FC<Props> = ({
             rows={2}
           />
 
-          <Group justify="flex-end" mt="md">
-            <Button variant="default" onClick={() => setQuickModalOpened(false)}>
+          <Group justify="flex-end" mt="md" gap="xs">
+            <Button size="xs" variant="default" onClick={() => setQuickModalOpened(false)}>
               Cancel
             </Button>
-            <Button color="blue" onClick={handleSaveQuickEvent} leftSection={<IconCheck size={16} />}>
-              Save Event
+            <Button size="xs" color="blue" onClick={handleSaveQuickEvent} leftSection={<IconCheck size={14} />}>
+              Save
             </Button>
           </Group>
         </Stack>

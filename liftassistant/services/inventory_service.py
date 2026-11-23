@@ -256,42 +256,29 @@ class InventoryService:
         cursor = self.repo.conn.cursor()
         rows = cursor.execute(
             """
-            SELECT dp.*, p.name AS product_name, p.qu_stock_id AS unit
+            SELECT dp.*, p.name AS product_name, COALESCE(p.qu_stock_id, dp.unit) AS unit
             FROM depletion_proposals dp
             LEFT JOIN products p ON dp.product_id = p.id
             WHERE dp.status = 'PENDING'
             ORDER BY dp.created_at DESC
             """
         ).fetchall()
-        if rows:
-            return [dict(r) for r in rows]
-
-        return [
-            {
-                "id": "prop_01",
-                "product_id": "prod_01",
-                "product_name": "Whole Milk (Gallon)",
-                "proposed_deduction": 0.5,
-                "unit": "gal",
-                "days_interval": 3,
-                "estimated_burn_rate": "0.15 gal/day",
-            },
-            {
-                "id": "prop_02",
-                "product_id": "prod_02",
-                "product_name": "Large Brown Eggs (48 Count)",
-                "proposed_deduction": 6,
-                "unit": "eggs",
-                "days_interval": 3,
-                "estimated_burn_rate": "2.0 eggs/day",
-            },
-        ]
+        result = []
+        for r in rows:
+            d = dict(r)
+            amount = d.get("proposed_amount") if d.get("proposed_amount") is not None else d.get("proposed_deduction", 1.0)
+            d["proposed_deduction"] = amount
+            d["amount"] = amount
+            d["days_interval"] = d.get("days_interval", 3)
+            d["estimated_burn_rate"] = d.get("reason") or f"{amount} {d.get('unit', 'ea')} / period"
+            result.append(d)
+        return result
 
     def dismiss_depletion(self, proposal_id: str) -> Dict[str, Any]:
         """Reject/dismiss a pending depletion proposal without deducting stock."""
         cursor = self.repo.conn.cursor()
         cursor.execute(
-            "UPDATE depletion_proposals SET status = 'DISMISSED', resolved_at = CURRENT_TIMESTAMP WHERE id = ?",
+            "UPDATE depletion_proposals SET status = 'DISMISSED' WHERE id = ?",
             (proposal_id,),
         )
         self.repo.conn.commit()
@@ -349,9 +336,10 @@ class InventoryService:
         cursor = self.repo.conn.cursor()
         row = cursor.execute("SELECT * FROM depletion_proposals WHERE id = ?", (proposal_id,)).fetchone()
         if row:
-            result = self.confirm_depletion(proposal_id, row["product_id"], row["proposed_deduction"])
+            amount = row["proposed_amount"] if "proposed_amount" in row.keys() else row["proposed_deduction"]
+            result = self.confirm_depletion(proposal_id, row["product_id"], float(amount))
             cursor.execute(
-                "UPDATE depletion_proposals SET status = 'CONFIRMED', resolved_at = CURRENT_TIMESTAMP WHERE id = ?",
+                "UPDATE depletion_proposals SET status = 'CONFIRMED' WHERE id = ?",
                 (proposal_id,),
             )
             self.repo.conn.commit()

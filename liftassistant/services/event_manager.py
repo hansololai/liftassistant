@@ -118,6 +118,7 @@ class EventManager:
         place_id: Optional[str] = None,
         duration_minutes: int = 60,
         deadline: Optional[datetime] = None,
+        completed_at: Optional[datetime] = None,
         people_involved: Optional[List[str]] = None,
         notes: Optional[str] = None,
         total_amount: float = 0.0,
@@ -137,6 +138,7 @@ class EventManager:
             raise ValueError(f"duration_minutes must be positive, got {duration_minutes}")
 
         # Grounded Place Validation
+        verified_place = None
         if place_id:
             if self.place_repo:
                 verified_place = self.place_repo.get_place(place_id)
@@ -147,6 +149,8 @@ class EventManager:
                 row = cursor.execute("SELECT * FROM places WHERE id = ?", (place_id,)).fetchone()
                 if not row:
                     raise ValueError(f"place_id '{place_id}' does not exist in verified places table")
+                else:
+                    verified_place = Place(**dict(row))
 
         event_id = f"evt_{uuid4().hex[:8]}"
         dining, shopping, maintenance = self._assemble_sub_details(
@@ -167,7 +171,9 @@ class EventManager:
             scheduled_at=scheduled_at,
             scheduled_end_at=scheduled_at + timedelta(minutes=duration_minutes),
             deadline=deadline,
+            completed_at=completed_at,
             place_id=place_id,
+            place=verified_place,
             studio=studio,
             people_involved=people_involved or [],
             notes=notes,
@@ -368,8 +374,8 @@ class EventManager:
                 check_conflicts=kwargs.get("check_conflicts", True),
             )
 
-        # Dispatch: Device GPS Grounding (Option 3)
-        if "latitude" in kwargs and "longitude" in kwargs and kwargs["latitude"] is not None and kwargs["longitude"] is not None:
+        # Dispatch: Device GPS Grounding (Option 3) - only when place_id is not already provided
+        if not kwargs.get("place_id") and "latitude" in kwargs and "longitude" in kwargs and kwargs["latitude"] is not None and kwargs["longitude"] is not None:
             return self.create_quick_action_event(
                 title=title,
                 event_type=kwargs.get("event_type", "CUSTOM"),
@@ -385,7 +391,7 @@ class EventManager:
                 check_conflicts=kwargs.get("check_conflicts", True),
             )
 
-        # Dispatch: Scheduled Event (Option 2)
+        # Dispatch: Scheduled / Grounded Place Event (Option 2)
         sched_at = kwargs.get("scheduled_at") or datetime.now()
         return self.create_scheduled_event(
             title=title,
@@ -395,6 +401,7 @@ class EventManager:
             studio=kwargs.get("studio"),
             duration_minutes=int(kwargs.get("duration_minutes", 60)),
             deadline=kwargs.get("deadline"),
+            completed_at=kwargs.get("completed_at"),
             people_involved=kwargs.get("people_involved"),
             notes=kwargs.get("notes"),
             total_amount=float(kwargs.get("total_amount", 0.0)),

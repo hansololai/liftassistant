@@ -25,19 +25,7 @@ import {
   IconCpu,
   IconAlertTriangle,
 } from '@tabler/icons-react';
-import {
-  MOCK_CONFLICTS,
-  MOCK_DEPLETIONS,
-  MOCK_EVENTS,
-  MOCK_GENERATORS,
-  MOCK_PRODUCTS,
-  MOCK_RECEIPT_JOBS,
-  MOCK_SHOPPING_LIST,
-  MOCK_TEMPLATES,
-  MOCK_TRIPS,
-  MOCK_CONVERSIONS,
-  MOCK_STORE_ITEM_MULTIPLIERS,
-} from './mockData';
+import { MOCK_TEMPLATES } from './mockData';
 import { apiClient } from './api/client';
 import { TodayOverview } from './components/TodayOverview';
 import { NotificationsView } from './components/NotificationsView';
@@ -60,6 +48,7 @@ import {
   ReceiptJob,
   ShoppingListItem,
   SnapIntent,
+  TripItem,
 } from './types';
 
 type TabType = 'today' | 'notifications' | 'events' | 'pantry' | 'workers' | 'trips';
@@ -148,18 +137,19 @@ export default function App() {
     }
   }, []);
 
-  // Application State
-  const [conflicts, setConflicts] = useState<ConflictItem[]>(MOCK_CONFLICTS);
-  const [events, setEvents] = useState<EventItem[]>(MOCK_EVENTS);
+  // Application State - Pure Live Backend Connected
+  const [conflicts, setConflicts] = useState<ConflictItem[]>([]);
+  const [events, setEvents] = useState<EventItem[]>([]);
   const [places, setPlaces] = useState<PlaceItem[]>([]);
   const [placesLoading, setPlacesLoading] = useState(false);
-  const [depletions, setDepletions] = useState<DepletionProposal[]>(MOCK_DEPLETIONS);
-  const [products, setProducts] = useState<ProductItem[]>(MOCK_PRODUCTS);
-  const [conversions, setConversions] = useState<ProductUnitConversion[]>(MOCK_CONVERSIONS);
-  const [multipliers, setMultipliers] = useState<StoreItemMultiplier[]>(MOCK_STORE_ITEM_MULTIPLIERS);
-  const [generators, setGenerators] = useState<EventGeneratorItem[]>(MOCK_GENERATORS);
-  const [shoppingList, setShoppingList] = useState<ShoppingListItem[]>(MOCK_SHOPPING_LIST);
-  const [jobs, setJobs] = useState<ReceiptJob[]>(MOCK_RECEIPT_JOBS);
+  const [depletions, setDepletions] = useState<DepletionProposal[]>([]);
+  const [products, setProducts] = useState<ProductItem[]>([]);
+  const [conversions, setConversions] = useState<ProductUnitConversion[]>([]);
+  const [multipliers, setMultipliers] = useState<StoreItemMultiplier[]>([]);
+  const [generators, setGenerators] = useState<EventGeneratorItem[]>([]);
+  const [shoppingList, setShoppingList] = useState<ShoppingListItem[]>([]);
+  const [jobs, setJobs] = useState<ReceiptJob[]>([]);
+  const [trips, setTrips] = useState<TripItem[]>([]);
   const [notification, setNotification] = useState<{ message: string; type?: 'success' | 'error' | 'info'; title?: string } | string | null>(null);
   const [selectedEventForModal, setSelectedEventForModal] = useState<EventItem | null>(null);
   const [isRecheckingConflicts, setIsRecheckingConflicts] = useState(false);
@@ -214,7 +204,7 @@ export default function App() {
         setMultipliers(list);
       }
     } catch (err) {
-      console.warn('Could not load multipliers from API, keeping mock/local state:', err);
+      console.warn('Could not load multipliers from API:', err);
     }
   }, []);
 
@@ -235,7 +225,7 @@ export default function App() {
       const list = await apiClient.listEvents();
       setEvents(list);
     } catch (err) {
-      console.warn('Could not load events from API, keeping local state:', err);
+      console.warn('Could not load events from API:', err);
     }
   }, []);
 
@@ -244,7 +234,7 @@ export default function App() {
       const list = await apiClient.listConflicts();
       setConflicts(list);
     } catch (err) {
-      console.warn('Could not load conflicts from API, keeping mock/local state:', err);
+      console.warn('Could not load conflicts from API:', err);
     }
   }, []);
 
@@ -255,7 +245,61 @@ export default function App() {
         setJobs(serverJobs);
       }
     } catch (err) {
-      console.warn('Could not load receipt jobs from API, keeping mock/local state:', err);
+      console.warn('Could not load receipt jobs from API:', err);
+    }
+  }, []);
+
+  const refreshProducts = useCallback(async () => {
+    try {
+      const list = await apiClient.listProducts();
+      setProducts(list);
+    } catch (err) {
+      console.warn('Could not load products from API:', err);
+    }
+  }, []);
+
+  const refreshConversions = useCallback(async () => {
+    try {
+      const list = await apiClient.listConversions();
+      setConversions(list);
+    } catch (err) {
+      console.warn('Could not load conversions from API:', err);
+    }
+  }, []);
+
+  const refreshDepletions = useCallback(async () => {
+    try {
+      const list = await apiClient.listDepletions();
+      setDepletions(list);
+    } catch (err) {
+      console.warn('Could not load depletion proposals from API:', err);
+    }
+  }, []);
+
+  const refreshShoppingList = useCallback(async () => {
+    try {
+      const list = await apiClient.listShoppingList();
+      setShoppingList(list);
+    } catch (err) {
+      console.warn('Could not load shopping list from API:', err);
+    }
+  }, []);
+
+  const refreshGenerators = useCallback(async () => {
+    try {
+      const list = await apiClient.listGenerators();
+      setGenerators(list);
+    } catch (err) {
+      console.warn('Could not load generators from API:', err);
+    }
+  }, []);
+
+  const refreshTrips = useCallback(async () => {
+    try {
+      const list = await apiClient.listTrips();
+      setTrips(list);
+    } catch (err) {
+      console.warn('Could not load trips from API:', err);
     }
   }, []);
 
@@ -266,8 +310,27 @@ export default function App() {
       void refreshMultipliers();
       void refreshConflicts();
       void refreshJobs();
+      void refreshProducts();
+      void refreshConversions();
+      void refreshDepletions();
+      void refreshShoppingList();
+      void refreshGenerators();
+      void refreshTrips();
     }
-  }, [authenticated, refreshPlaces, refreshEvents, refreshMultipliers, refreshConflicts, refreshJobs]);
+  }, [
+    authenticated,
+    refreshPlaces,
+    refreshEvents,
+    refreshMultipliers,
+    refreshConflicts,
+    refreshJobs,
+    refreshProducts,
+    refreshConversions,
+    refreshDepletions,
+    refreshShoppingList,
+    refreshGenerators,
+    refreshTrips,
+  ]);
 
   const handleUploadReceiptFile = async (file: File) => {
     try {
@@ -297,10 +360,14 @@ export default function App() {
       });
     } catch (err: any) {
       console.error('Receipt upload failed:', err);
+      let errorMsg = err?.message || 'Receipt parsing failed. Event was NOT created.';
+      if (typeof errorMsg === 'string' && (errorMsg.toLowerCase().includes('fetch aborted') || errorMsg.toLowerCase().includes('the user aborted a request'))) {
+        errorMsg = 'Upload timed out. The Vision AI took longer than 2 minutes to process this photo. Please try taking a closer photo of just the receipt.';
+      }
       showNotification({
         type: 'error',
         title: 'Receipt Upload Failed',
-        message: `❌ ${err.message || 'Receipt parsing failed. Event was NOT created.'}`,
+        message: `❌ ${errorMsg}`,
       });
       void refreshJobs();
     }
@@ -437,11 +504,13 @@ export default function App() {
       event_type: newEvent.event_type || 'CUSTOM',
       scheduled_at: newEvent.scheduled_at || new Date().toISOString(),
       scheduled_end_at: newEvent.scheduled_end_at,
-      completed_at: newEvent.completed_at || new Date().toISOString(),
+      completed_at: newEvent.completed_at,
       duration_minutes: newEvent.duration_minutes || 15,
-      people_involved: newEvent.people_involved || ['Marcus'],
+      people_involved: newEvent.people_involved && newEvent.people_involved.length > 0 ? newEvent.people_involved : ['Marcus'],
       description: newEvent.description || '',
       place_name: newEvent.place_name || 'Home (100 Main St, Cranberry Twp, PA)',
+      place_id: newEvent.place_id,
+      studio: newEvent.studio,
       latitude: newEvent.latitude,
       longitude: newEvent.longitude,
     };
@@ -453,9 +522,13 @@ export default function App() {
         title: fullEvent.title,
         event_type: fullEvent.event_type,
         scheduled_at: fullEvent.scheduled_at,
+        scheduled_end_at: fullEvent.scheduled_end_at,
         completed_at: fullEvent.completed_at,
         duration_minutes: fullEvent.duration_minutes,
         people_involved: fullEvent.people_involved,
+        place_id: fullEvent.place_id,
+        place_name: fullEvent.place_name,
+        studio: fullEvent.studio,
         notes: fullEvent.description,
         latitude: fullEvent.latitude,
         longitude: fullEvent.longitude,
@@ -484,64 +557,38 @@ export default function App() {
 
   // Event Generator Actions (Awaited server confirmation & invalidation)
   const handleAddGenerator = async (newGen: EventGeneratorItem) => {
-    await new Promise((r) => setTimeout(r, 600));
-    setGenerators((prev) => [newGen, ...prev]);
-    showNotification(`Recurring generator "${newGen.name}" saved!`);
+    try {
+      await apiClient.createGenerator({
+        name: newGen.name,
+        event_type: newGen.event_type || 'CUSTOM',
+        recurrence_rule: newGen.recurrence_rule || 'MONTHLY',
+        recurrence_cycle: newGen.recurrence_rule || 'MONTHLY',
+        target_month: newGen.target_month,
+        target_day: newGen.target_day,
+        target_weekday: newGen.target_weekday,
+        start_time: newGen.start_time,
+        duration_minutes: newGen.duration_minutes,
+        lead_time_days: newGen.lead_time_days || 14,
+        deadline_offset_days: newGen.deadline_offset_days || 0,
+        description: newGen.description,
+      });
+      await refreshGenerators();
+      showNotification(`Recurring generator "${newGen.name}" saved to database!`);
+    } catch (err: any) {
+      console.warn('Create generator API failed:', err);
+      showNotification({ type: 'error', message: `Could not create generator: ${err?.message || err}` });
+    }
   };
 
-  const handleRunGenerator = (genId: string) => {
-    const gen = generators.find((g) => g.id === genId);
-    if (!gen) return;
-
-    // Calculate target & deadline date
-    const now = new Date();
-    const currentYear = now.getFullYear();
-    let targetDate = new Date();
-
-    if (gen.recurrence_rule === 'YEARLY') {
-      const targetMonth = gen.target_month ? gen.target_month - 1 : now.getMonth();
-      const targetDay = gen.target_day || 15;
-      targetDate = new Date(currentYear, targetMonth, targetDay, 23, 59, 59);
-      if (targetDate.getTime() < now.getTime() - 24 * 3600 * 1000) {
-        targetDate = new Date(currentYear + 1, targetMonth, targetDay, 23, 59, 59);
-      }
-    } else if (gen.recurrence_rule === 'MONTHLY') {
-      const targetDay = gen.target_day || 15;
-      targetDate = new Date(currentYear, now.getMonth(), targetDay, 23, 59, 59);
-      if (targetDate.getTime() < now.getTime() - 24 * 3600 * 1000) {
-        targetDate = new Date(currentYear, now.getMonth() + 1, targetDay, 23, 59, 59);
-      }
-    } else if (gen.recurrence_rule === 'WEEKLY' || gen.recurrence_rule === 'BI_WEEKLY') {
-      const targetWeekday = gen.target_weekday !== undefined ? gen.target_weekday : 1; // 1 = Monday
-      const currentDay = now.getDay();
-      let diff = (targetWeekday - currentDay + 7) % 7;
-      if (diff === 0) diff = gen.recurrence_rule === 'BI_WEEKLY' ? 14 : 7;
-      targetDate = new Date(now.getTime() + diff * 24 * 3600 * 1000);
-      targetDate.setHours(23, 59, 59, 0);
+  const handleRunGenerator = async (genId: string) => {
+    try {
+      const spawned = await apiClient.spawnGenerator(genId);
+      await Promise.all([refreshEvents(), refreshConflicts()]);
+      showNotification(`Spawned "${spawned.title}" on the ledger!`);
+    } catch (err: any) {
+      console.warn('Spawn generator API failed:', err);
+      showNotification({ type: 'error', message: `Could not spawn generator event: ${err?.message || err}` });
     }
-
-    const scheduledDate = new Date(targetDate.getTime() - gen.lead_time_days * 24 * 3600 * 1000);
-    const [startHour, startMin] = (gen.start_time || '09:00').split(':').map((s) => parseInt(s, 10));
-    scheduledDate.setHours(startHour, startMin, 0, 0);
-
-    const durationMins = gen.duration_minutes || 60;
-    const scheduledEndDate = new Date(scheduledDate.getTime() + durationMins * 60000);
-    const deadlineDate = new Date(targetDate.getTime() + gen.deadline_offset_days * 24 * 3600 * 1000);
-
-    const generatedEvent: EventItem = {
-      id: `evt_spawn_${Date.now()}`,
-      title: gen.name,
-      event_type: gen.event_type,
-      scheduled_at: scheduledDate.toISOString(),
-      scheduled_end_at: scheduledEndDate.toISOString(),
-      deadline: deadlineDate.toISOString(),
-      place_name: 'Cranberry Twp, PA',
-      people_involved: ['Dad'],
-      description: `Auto-generated from rule "${gen.name}". Lead time: ${gen.lead_time_days}d. Duration: ${durationMins}m. Due: ${deadlineDate.toLocaleDateString()}`,
-    };
-
-    setEvents((prev) => [generatedEvent, ...prev]);
-    showNotification(`Spawned "${gen.name}" with deadline ${deadlineDate.toLocaleDateString()}!`);
   };
 
   // Unified Multi-Intent Intake Actions with User-Filled Context & Deferred AI Refinement
@@ -914,13 +961,9 @@ export default function App() {
   };
 
   // Create Product in Stock with Packaging Multiplier Mapping
-  const handleCreateProduct = (newProd: ProductItem, newConv: ProductUnitConversion) => {
-    setProducts((prev) => [newProd, ...prev]);
-    setConversions((prev) => [newConv, ...prev]);
-
-    // Persist to backend API in background
-    apiClient
-      .createProduct({
+  const handleCreateProduct = async (newProd: ProductItem, newConv: ProductUnitConversion) => {
+    try {
+      await apiClient.createProduct({
         name: newProd.name,
         category: newProd.category,
         qu_stock_id: newProd.unit,
@@ -931,53 +974,64 @@ export default function App() {
         store_name: newConv.store_name,
         receipt_raw_text: newConv.receipt_raw_text,
         is_fridge_quick_tile: newProd.is_fridge_quick_tile,
-      })
-      .catch((err) => {
-        console.warn('Backend product creation notice (offline/mock mode):', err);
       });
-
-    showNotification(
-      `📦 Created "${newProd.name}" in stock! Multiplier mapping: 1 ${newConv.purchase_unit} = ${newConv.unit_multiplier} ${newConv.stock_unit}.`
-    );
+      await Promise.all([refreshProducts(), refreshConversions(), refreshShoppingList()]);
+      showNotification(
+        `📦 Created "${newProd.name}" in stock! Multiplier mapping: 1 ${newConv.purchase_unit} = ${newConv.unit_multiplier} ${newConv.stock_unit}.`
+      );
+    } catch (err: any) {
+      console.warn('Backend product creation failed:', err);
+      showNotification({ type: 'error', message: `Could not create product: ${err?.message || err}` });
+    }
   };
 
   // Depletion Confirmation Gate
-  const handleConfirmDepletion = (id: string) => {
-    setDepletions((prev) => prev.filter((d) => d.id !== id));
-    showNotification('Pantry depletion confirmed and deducted from Grocy ledger.');
+  const handleConfirmDepletion = async (id: string) => {
+    try {
+      await apiClient.confirmDepletion(id);
+      showNotification('Pantry depletion confirmed and deducted from Grocy ledger.');
+      await Promise.all([refreshDepletions(), refreshProducts(), refreshShoppingList()]);
+    } catch (err: any) {
+      console.warn('Confirm depletion API failed:', err);
+      showNotification({ type: 'error', message: 'Could not confirm depletion proposal.' });
+    }
   };
 
-  const handleDismissDepletion = (id: string) => {
-    setDepletions((prev) => prev.filter((d) => d.id !== id));
-    showNotification('Depletion proposal dismissed.');
+  const handleDismissDepletion = async (id: string) => {
+    try {
+      await apiClient.dismissDepletion(id);
+      showNotification('Depletion proposal dismissed.');
+      await refreshDepletions();
+    } catch (err: any) {
+      console.warn('Dismiss depletion API failed:', err);
+    }
   };
 
   // Shopping List Toggle
-  const handleToggleShoppingItem = (id: string) => {
+  const handleToggleShoppingItem = async (id: string) => {
     setShoppingList((prev) =>
       prev.map((item) => (item.id === id ? { ...item, checked: !item.checked } : item))
     );
+    try {
+      await apiClient.toggleShoppingItem(id);
+      await refreshShoppingList();
+    } catch (err: any) {
+      console.warn('Toggle shopping item API failed:', err);
+    }
   };
 
   // Fridge Pad Quick-Deplete Action (Click to Consume)
-  const handleConsumeProduct = (productId: string, amount: number) => {
-    let updatedItem: ProductItem | null = null;
-    setProducts((prev) =>
-      prev.map((p) => {
-        if (p.id === productId) {
-          const newStock = Math.max(0, parseFloat((p.current_stock - amount).toFixed(2)));
-          const newRunway = parseFloat((newStock / p.daily_burn_rate).toFixed(1));
-          updatedItem = { ...p, current_stock: newStock, days_runway: newRunway };
-          return updatedItem;
-        }
-        return p;
-      })
-    );
-
-    if (updatedItem) {
-      const item: ProductItem = updatedItem;
-      const runwayMsg = item.days_runway < 7 ? `⚠️ Runway low: ${item.days_runway}d (queued to shopping)` : `${item.days_runway}d left`;
-      showNotification(`📱 Fridge Pad: Consumed -${amount} ${item.unit} of ${item.name}! Remaining: ${item.current_stock} ${item.unit} (${runwayMsg})`);
+  const handleConsumeProduct = async (productId: string, amount: number) => {
+    try {
+      await apiClient.consumeProduct(productId, amount);
+      const p = products.find((item) => item.id === productId);
+      const name = p?.name || 'Product';
+      const unit = p?.unit || 'unit';
+      showNotification(`📱 Fridge Pad: Consumed -${amount} ${unit} of ${name}!`);
+      await Promise.all([refreshProducts(), refreshShoppingList()]);
+    } catch (err: any) {
+      console.warn('Consume product stock API failed:', err);
+      showNotification({ type: 'error', message: `Could not consume stock: ${err?.message || err}` });
     }
   };
 
@@ -1090,7 +1144,7 @@ export default function App() {
 
         {/* Main Content Area */}
         <AppShell.Main style={{ paddingBottom: 'calc(84px + env(safe-area-inset-bottom, 0px))' }}>
-          <Container size="sm" p="xs">
+          <Container size="sm" px={{ base: 6, sm: 'xs' }} py="xs">
         {/* Floating Transient Action Notification (Always in View regardless of scroll) */}
         {notification && (
           <Box
@@ -1199,7 +1253,7 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'trips' && <TripsView trips={MOCK_TRIPS} />}
+            {activeTab === 'trips' && <TripsView trips={trips} />}
           </Container>
         </AppShell.Main>
 

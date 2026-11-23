@@ -25,10 +25,12 @@ from liftassistant.services.daily_workers import (
     WORKER_TYPE_EMAIL_EVENT,
     WORKER_TYPE_FACILITY_CLOSURE,
     WORKER_TYPE_INVENTORY_DEPLETION,
+    WORKER_TYPE_SCHOOL_MENU,
     get_master_daily_worker,
 )
 from liftassistant.services.email_event_generator import EXTRACTION_SYSTEM_PROMPT
 from liftassistant.services.event_generator_service import EventGeneratorService
+from liftassistant.services.school_menu_service import SchoolMenuService
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +63,11 @@ class FeedbackActionRequest(BaseModel):
     modified_amount: Optional[float] = None
     run_id: Optional[str] = None
     feedback_id: Optional[str] = None
+
+
+class MenuTextParseRequest(BaseModel):
+    text: str
+    reference_date: Optional[str] = None
 
 
 class RuleCreateRequest(BaseModel):
@@ -180,6 +187,41 @@ def trigger_depletion_worker_run():
     }
 
 
+@router.post("/school-menu/run")
+def trigger_school_menu_worker_run(max_results: int = 10):
+    """Trigger thin SchoolMenuWorker to perceive Primrose lunch menus asynchronously."""
+    master = get_master_daily_worker()
+    run = master.school_menu_worker.trigger_run_async(run_type="MANUAL", max_results=max_results)
+    return {
+        "run": run.model_dump(),
+        "summary_message": "Primrose school lunch menu sync started in background.",
+    }
+
+
+@router.post("/school-menu/parse-text")
+def parse_school_menu_text_directly(
+    payload: MenuTextParseRequest,
+    event_repo: EventRepository = Depends(get_event_repo),
+    place_repo: PlaceRepository = Depends(get_place_repo),
+    gen_run_repo: GeneratorRunRepository = Depends(get_gen_run_repo),
+):
+    """Directly parse menu text or PDF content and generate lunch switch reminders."""
+    service = SchoolMenuService(
+        event_repo=event_repo,
+        place_repo=place_repo,
+        gen_run_repo=gen_run_repo,
+    )
+    events = service.process_raw_menu_text(
+        raw_text=payload.text,
+        reference_date=payload.reference_date,
+    )
+    return {
+        "created_count": len(events),
+        "events": [e.model_dump() for e in events],
+        "summary_message": f"Processed menu text. Generated {len(events)} lunch switch reminder(s).",
+    }
+
+
 @router.get("/runs")
 def list_all_generator_runs(
     generator_type: Optional[str] = None,
@@ -193,6 +235,8 @@ def list_all_generator_runs(
         "EMAIL_EVENT_GENERATOR": WORKER_TYPE_EMAIL_EVENT,
         "FACILITY_WORKER": WORKER_TYPE_FACILITY_CLOSURE,
         "DEPLETION_WORKER": WORKER_TYPE_INVENTORY_DEPLETION,
+        "SCHOOL_MENU": WORKER_TYPE_SCHOOL_MENU,
+        "SCHOOL_MENU_WORKER": WORKER_TYPE_SCHOOL_MENU,
     }
     resolved_type = alias_map.get(generator_type, generator_type) if generator_type else None
     runs = gen_run_repo.list_runs(generator_type=resolved_type, limit=limit)
@@ -296,6 +340,11 @@ def get_generator_run_result(
             summary_message = details.get("summary_message") or details.get("message") or (
                 f"Facility schedule scan complete: verified active blackout windows. "
                 f"{run.created_count} closures recorded; conflict flags synchronized."
+            )
+        elif run.generator_type in (WORKER_TYPE_SCHOOL_MENU, "SCHOOL_MENU_WORKER"):
+            summary_message = details.get("summary_message") or (
+                f"Primrose school lunch menu evaluation complete: scanned {run.scanned_count} menu email(s). "
+                f"Generated {run.created_count} switch reminder(s) into calendar."
             )
 
     # Format full generated events list for traceability

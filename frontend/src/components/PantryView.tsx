@@ -34,7 +34,6 @@ import {
   IconSparkles,
 } from '@tabler/icons-react';
 import { ProductItem, ShoppingListItem, ProductUnitConversion, StoreItemMultiplier } from '../types';
-import { MOCK_CONVERSIONS, MOCK_STORE_ITEM_MULTIPLIERS } from '../mockData';
 import { CreateProductModal } from './CreateProductModal';
 
 interface Props {
@@ -51,8 +50,8 @@ interface Props {
 export const PantryView: React.FC<Props> = ({
   products,
   shoppingList,
-  conversions = MOCK_CONVERSIONS,
-  multipliers = MOCK_STORE_ITEM_MULTIPLIERS,
+  conversions = [],
+  multipliers = [],
   onToggleShoppingItem,
   onConsumeProduct,
   onCreateProduct,

@@ -100,6 +100,8 @@ class LifeEvent(BaseModel):
     conflict_status: Optional[str] = None
     conflict_reason: Optional[str] = None
     generator_run_id: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     
     # Polymorphic joined extensions (loaded via relational joins)
     dining_detail: Optional[DiningDetail] = None
@@ -337,6 +339,7 @@ class StandardizedReceipt(BaseModel):
     tip_amount: float = 0.0
     total_amount: float
     currency: str = "USD"
+    category: Optional[str] = None  # "DINING" or "SHOPPING"
     source_channel: str = "PHOTO_CAMERA"
     source_reference_id: Optional[str] = None
     raw_ocr_json: Optional[str] = None

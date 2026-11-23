@@ -14,7 +14,7 @@ from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CAS_ROOT = Path("data") / "receipt_store"
+DEFAULT_CAS_ROOT = Path(os.environ.get("LIFTASSISTANT_CAS_ROOT", Path("data") / "receipt_store"))
 
 
 class CASStorage:

@@ -47,7 +47,10 @@ class TestPhase4RestApi(unittest.TestCase):
     def setUpClass(cls):
         close_connection_pool(TEST_API_DB)
         if TEST_API_DB.exists():
-            os.remove(TEST_API_DB)
+            try:
+                os.remove(TEST_API_DB)
+            except OSError:
+                pass
         init_db(TEST_API_DB)
         seed_database(TEST_API_DB)
 

@@ -256,8 +256,12 @@ def check_event_conflict(
     event_manager: EventManager = Depends(get_event_manager),
 ):
     """Pre-flight conflict check endpoint. Returns any clashes with facility blackouts, travel buffers, or attendees."""
+    sched_at = payload.scheduled_at
+    if sched_at.tzinfo is not None:
+        sched_at = sched_at.astimezone().replace(tzinfo=None)
+
     conflicts = event_manager.check_event_conflict(
-        scheduled_at=payload.scheduled_at,
+        scheduled_at=sched_at,
         duration_minutes=payload.duration_minutes or 60,
         title=payload.title or "Proposed Event",
         people_involved=payload.people_involved or [],

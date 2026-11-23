@@ -5,6 +5,7 @@ Supports live connection pooling with an abstract interface ready for PostgreSQL
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 import logging
+import os
 from pathlib import Path
 import queue
 import sqlite3
@@ -13,14 +14,15 @@ from typing import Any, Dict, Generator, List, Optional
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DB_PATH = Path("data") / "liftassistant.db"
+DEFAULT_DB_PATH = Path(os.environ.get("LIFTASSISTANT_DB_PATH", Path("data") / "liftassistant.db"))
 DEFAULT_SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 
 def get_db_path() -> Path:
     """Return database path and ensure parent directory exists."""
-    DEFAULT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    return DEFAULT_DB_PATH
+    db_path = Path(os.environ.get("LIFTASSISTANT_DB_PATH", DEFAULT_DB_PATH))
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    return db_path
 
 
 # =========================================================================

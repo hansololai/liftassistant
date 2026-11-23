@@ -79,6 +79,15 @@ interface Props {
   onUpsertMultiplier?: (store: string, item: string, multiplier: number, productId?: string) => void;
 }
 
+const formatDatetimeLocal = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+};
+
 export const EventModal: React.FC<Props> = ({
   opened,
   event,
@@ -336,7 +345,7 @@ export const EventModal: React.FC<Props> = ({
         }
         setCheckingConflict(true);
         const res = await apiClient.checkConflict({
-          scheduled_at: parsedDate.toISOString(),
+          scheduled_at: formatDatetimeLocal(parsedDate),
           duration_minutes: durationMinutes,
           title: title.trim() || event?.title || 'Event',
           people_involved: selectedPeople,
@@ -606,28 +615,32 @@ export const EventModal: React.FC<Props> = ({
                       )}
                     </Box>
                   </Group>
-                  <Group gap={6}>
-                    <Button
-                      variant="subtle"
-                      size="compact-xs"
-                      color="teal"
-                      leftSection={showReceiptImage ? <IconEyeOff size={13} /> : <IconEye size={13} />}
-                      onClick={() => setShowReceiptImage(!showReceiptImage)}
-                    >
-                      {showReceiptImage ? 'Hide Photo' : 'View Photo'}
-                    </Button>
-                    <ActionIcon
-                      component="a"
-                      href={receiptFileUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      size="sm"
-                      variant="light"
-                      color="teal"
-                      title="Open full receipt in new tab"
-                    >
-                      <IconExternalLink size={14} />
-                    </ActionIcon>
+                  <Group gap={4}>
+                    <Tooltip label={showReceiptImage ? 'Hide photo' : 'View photo'}>
+                      <ActionIcon
+                        variant="subtle"
+                        size="sm"
+                        color="teal"
+                        onClick={() => setShowReceiptImage(!showReceiptImage)}
+                        aria-label={showReceiptImage ? 'Hide photo' : 'View photo'}
+                      >
+                        {showReceiptImage ? <IconEyeOff size={15} /> : <IconEye size={15} />}
+                      </ActionIcon>
+                    </Tooltip>
+                    <Tooltip label="Open full receipt in new tab">
+                      <ActionIcon
+                        component="a"
+                        href={receiptFileUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        size="sm"
+                        variant="light"
+                        color="teal"
+                        aria-label="Open full receipt in new tab"
+                      >
+                        <IconExternalLink size={15} />
+                      </ActionIcon>
+                    </Tooltip>
                   </Group>
                 </Group>
 
@@ -904,11 +917,24 @@ export const EventModal: React.FC<Props> = ({
               />
             </Group>
 
-            {/* Short 1-line note if conflict detected */}
+            {/* Detailed note if conflict detected */}
             {((isTimingOrPeopleChanged && conflictWarning?.has_conflict) || (!isTimingOrPeopleChanged && initialBaseline?.hasConflict)) && (
-              <Text size="11px" c="red.8" fw={500} mt={6} truncate>
-                ⚠️ {conflictWarning?.conflicts[0]?.title || initialBaseline?.conflictReason || 'Schedule conflict detected'}
-              </Text>
+              <Alert
+                icon={<IconAlertTriangle size={16} />}
+                color="red"
+                variant="light"
+                mt="xs"
+                radius="md"
+                title={conflictWarning?.conflicts[0]?.title || initialBaseline?.conflictReason || 'Schedule conflict detected'}
+                styles={{ title: { fontSize: '12px', fontWeight: 600 }, message: { fontSize: '11px' } }}
+              >
+                {conflictWarning?.conflicts[0]?.description || 'This event conflicts with an existing closure or class.'}
+                {conflictWarning?.conflicts[0]?.suggested_action && (
+                  <Text size="11px" c="dimmed" mt={4}>
+                    💡 {conflictWarning.conflicts[0].suggested_action}
+                  </Text>
+                )}
+              </Alert>
             )}
           </Paper>
         )}
@@ -961,26 +987,18 @@ export const EventModal: React.FC<Props> = ({
         <Divider />
 
         {/* 6. Modal Actions */}
-        <Group justify="flex-end" gap="sm">
-          {isConfirmingReceipt ? (
-            <Button
-              color="teal"
-              fullWidth
-              leftSection={<IconCheck size={16} />}
-              onClick={handleSubmit}
-            >
-              Confirm & Log
-            </Button>
-          ) : (
-            <Button
-              color="blue"
-              fullWidth
-              leftSection={<IconCheck size={16} />}
-              onClick={handleSubmit}
-            >
-              Save Changes
-            </Button>
-          )}
+        <Group justify="flex-end" gap="xs">
+          <Button variant="default" size="xs" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            color={isConfirmingReceipt ? 'teal' : 'blue'}
+            size="xs"
+            leftSection={<IconCheck size={14} />}
+            onClick={handleSubmit}
+          >
+            {isConfirmingReceipt ? 'Confirm' : 'Save'}
+          </Button>
         </Group>
       </Stack>
     </Modal>

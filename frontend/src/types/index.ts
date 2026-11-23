@@ -80,11 +80,15 @@ export interface QuickTemplate {
   icon: string;
   default_category: EventType;
   default_person: string;
+  default_people?: string[];
   default_duration_minutes: number;
   default_description: string;
   pinned: boolean;
   modal_type?: 'simple' | 'detailed' | 'smart_intake';
   default_place?: string;
+  default_place_id?: string;
+  default_studio?: string;
+  default_coords?: { latitude: number; longitude: number };
 }
 
 export interface ProductItem {

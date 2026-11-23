@@ -20,6 +20,15 @@ from liftassistant.services.facility_provider import (
 logger = logging.getLogger(__name__)
 
 
+def _to_naive(dt: Optional[datetime]) -> Optional[datetime]:
+    """Ensure datetime is offset-naive in local system time for consistent comparison with DB values."""
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.astimezone().replace(tzinfo=None)
+    return dt
+
+
 # Standard travel time lookup between known family hubs (in minutes)
 KNOWN_DRIVE_TIMES_MINUTES: Dict[Tuple[str, str], int] = {
     ("pediatrician_north_hills", "cranberry_park"): 26,
@@ -71,13 +80,16 @@ class ConflictEngine:
             for evt in events:
                 if not evt.scheduled_at:
                     continue
-                evt_end = evt.scheduled_end_at or (evt.scheduled_at + timedelta(minutes=getattr(evt, "duration_minutes", None) or 60))
+                evt_start = _to_naive(evt.scheduled_at)
+                if not evt_start:
+                    continue
+                evt_end = _to_naive(evt.scheduled_end_at) or (evt_start + timedelta(minutes=getattr(evt, "duration_minutes", None) or 60))
                 place_name = (evt.place.name if evt.place else (evt.place_id or "")).lower()
 
                 name_hint = "ymca" if ("ymca" in place_name or "ymca" in evt.title.lower()) else (evt.place.name if evt.place else None)
                 try:
                     closures = self.place_repo.find_closures_overlapping(
-                        start_time=evt.scheduled_at,
+                        start_time=evt_start,
                         end_time=evt_end,
                         resource_id=evt.place_id,
                         resource_name=name_hint,
@@ -118,7 +130,10 @@ class ConflictEngine:
             if not evt.scheduled_at:
                 continue
 
-            evt_end = evt.scheduled_end_at or (evt.scheduled_at + timedelta(minutes=getattr(evt, "duration_minutes", None) or 60))
+            evt_start = _to_naive(evt.scheduled_at)
+            if not evt_start:
+                continue
+            evt_end = _to_naive(evt.scheduled_end_at) or (evt_start + timedelta(minutes=getattr(evt, "duration_minutes", None) or 60))
             facility_text = f"{evt.title} {evt.notes or ''}".lower()
             place_name = (evt.place.name if evt.place else (evt.place_id or "")).lower()
 
@@ -143,7 +158,7 @@ class ConflictEngine:
 
             try:
                 occupied_windows = self.facility_provider.get_occupied_windows(
-                    target_date=evt.scheduled_at.date(),
+                    target_date=evt_start.date(),
                     studio_filter=studio_filter,
                 )
             except Exception as e:
@@ -152,8 +167,10 @@ class ConflictEngine:
 
             for w in occupied_windows:
                 # Check time intersection: max(start1, start2) < min(end1, end2)
-                latest_start = max(evt.scheduled_at, w.start_time)
-                earliest_end = min(evt_end, w.end_time)
+                w_start = _to_naive(w.start_time)
+                w_end = _to_naive(w.end_time)
+                latest_start = max(evt_start, w_start)
+                earliest_end = min(evt_end, w_end)
 
                 if latest_start < earliest_end:
                     # Avoid duplicate conflict if already caught by Part A from DB
@@ -179,7 +196,7 @@ class ConflictEngine:
     def _check_person_overlap(self, events: List[LifeEvent]) -> List[Conflict]:
         """Detect when the same person is scheduled for two events simultaneously."""
         conflicts: List[Conflict] = []
-        scheduled = [e for e in events if e.scheduled_at and e.scheduled_end_at]
+        scheduled = [e for e in events if e.scheduled_at and (e.scheduled_end_at or getattr(e, "duration_minutes", None))]
 
         for i in range(len(scheduled)):
             for j in range(i + 1, len(scheduled)):
@@ -191,9 +208,14 @@ class ConflictEngine:
                 if not shared_people:
                     continue
 
+                e1_start = _to_naive(e1.scheduled_at)
+                e1_end = _to_naive(e1.scheduled_end_at) or (e1_start + timedelta(minutes=getattr(e1, "duration_minutes", None) or 60))
+                e2_start = _to_naive(e2.scheduled_at)
+                e2_end = _to_naive(e2.scheduled_end_at) or (e2_start + timedelta(minutes=getattr(e2, "duration_minutes", None) or 60))
+
                 # Check time intersection: max(start1, start2) < min(end1, end2)
-                latest_start = max(e1.scheduled_at, e2.scheduled_at)
-                earliest_end = min(e1.scheduled_end_at, e2.scheduled_end_at)
+                latest_start = max(e1_start, e2_start)
+                earliest_end = min(e1_end, e2_end)
 
                 if latest_start < earliest_end:
                     people_str = ", ".join(shared_people)
@@ -215,7 +237,8 @@ class ConflictEngine:
     def _check_travel_buffers(self, events: List[LifeEvent]) -> List[Conflict]:
         """Detect consecutive events where the gap is shorter than the required drive time."""
         conflicts: List[Conflict] = []
-        scheduled = sorted([e for e in events if e.scheduled_at and e.scheduled_end_at], key=lambda x: x.scheduled_at)
+        valid_events = [e for e in events if e.scheduled_at]
+        scheduled = sorted(valid_events, key=lambda x: _to_naive(x.scheduled_at))
 
         for i in range(len(scheduled) - 1):
             e1 = scheduled[i]
@@ -226,8 +249,12 @@ class ConflictEngine:
             if not shared:
                 continue
 
+            e1_start = _to_naive(e1.scheduled_at)
+            e1_end = _to_naive(e1.scheduled_end_at) or (e1_start + timedelta(minutes=getattr(e1, "duration_minutes", None) or 60))
+            e2_start = _to_naive(e2.scheduled_at)
+
             # Gap between e1 end and e2 start
-            gap_minutes = (e2.scheduled_at - e1.scheduled_end_at).total_seconds() / 60.0
+            gap_minutes = (e2_start - e1_end).total_seconds() / 60.0
             if gap_minutes < 0:
                 # Already captured by overlap
                 continue

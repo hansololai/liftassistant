@@ -195,6 +195,9 @@ class EventRepository:
                 """
                 INSERT INTO dining_details (event_id, event_type, rating, total_amount)
                 VALUES (?, 'DINING', ?, ?)
+                ON CONFLICT(event_id) DO UPDATE SET
+                    rating = excluded.rating,
+                    total_amount = excluded.total_amount
                 """,
                 (event.id, dining.rating, dining.total_amount),
             )
@@ -203,6 +206,10 @@ class EventRepository:
                 """
                 INSERT INTO shopping_details (event_id, event_type, receipt_image_path, pantry_updated, total_amount)
                 VALUES (?, 'SHOPPING', ?, ?, ?)
+                ON CONFLICT(event_id) DO UPDATE SET
+                    receipt_image_path = excluded.receipt_image_path,
+                    pantry_updated = excluded.pantry_updated,
+                    total_amount = excluded.total_amount
                 """,
                 (event.id, shopping.receipt_image_path, int(shopping.pantry_updated), shopping.total_amount),
             )
@@ -211,6 +218,11 @@ class EventRepository:
                 """
                 INSERT INTO maintenance_details (event_id, event_type, equipment_id, service_type, next_due_interval_days, next_due_miles)
                 VALUES (?, 'MAINTENANCE', ?, ?, ?, ?)
+                ON CONFLICT(event_id) DO UPDATE SET
+                    equipment_id = excluded.equipment_id,
+                    service_type = excluded.service_type,
+                    next_due_interval_days = excluded.next_due_interval_days,
+                    next_due_miles = excluded.next_due_miles
                 """,
                 (
                     event.id,
@@ -272,6 +284,10 @@ class EventRepository:
     def delete_event(self, event_id: str) -> bool:
         """Deletes event and cascades to extension tables automatically."""
         cursor = self.conn.cursor()
+        cursor.execute("DELETE FROM dining_details WHERE event_id = ?", (event_id,))
+        cursor.execute("DELETE FROM shopping_details WHERE event_id = ?", (event_id,))
+        cursor.execute("DELETE FROM maintenance_details WHERE event_id = ?", (event_id,))
+        cursor.execute("DELETE FROM receipts WHERE event_id = ?", (event_id,))
         cursor.execute("DELETE FROM events WHERE id = ?", (event_id,))
         self.conn.commit()
         return cursor.rowcount > 0
@@ -416,6 +432,8 @@ class EventRepository:
             conflict_status=row["conflict_status"],
             conflict_reason=row["conflict_reason"],
             generator_run_id=row["generator_run_id"] if "generator_run_id" in row_keys else None,
+            created_at=row["created_at"] if "created_at" in row_keys else None,
+            updated_at=row["updated_at"] if "updated_at" in row_keys else None,
             place=place,
             dining_detail=dining_detail,
             shopping_detail=shopping_detail,
@@ -469,7 +487,8 @@ class InventoryRepository:
             raise ValueError(f"Product '{product_id}' not found")
 
         # 2. Log double-entry transaction
-        tx_id = f"tx_{product_id}_{int(sqlite3.time.time()) if hasattr(sqlite3, 'time') else 1000}"
+        from uuid import uuid4
+        tx_id = f"tx_{product_id}_{uuid4().hex[:10]}"
         cursor.execute(
             """
             INSERT INTO stock_transactions (id, product_id, transaction_type, amount, unit, source)
@@ -502,7 +521,8 @@ class InventoryRepository:
         stock_units_added = purchase_quantity * factor
 
         # Log transaction
-        tx_id = f"tx_restock_{product_id}"
+        from uuid import uuid4
+        tx_id = f"tx_restock_{product_id}_{uuid4().hex[:10]}"
         cursor.execute(
             """
             INSERT INTO stock_transactions (id, product_id, transaction_type, amount, unit, source, reference_id)
@@ -1110,6 +1130,12 @@ class PlaceRepository:
     ) -> List[ResourceClosure]:
         """Find any closure overlapping [start_time, end_time] for a given resource."""
         cursor = self.conn.cursor()
+        # Normalize timezone-aware datetimes to local naive time to match SQLite string format
+        if isinstance(start_time, datetime) and start_time.tzinfo is not None:
+            start_time = start_time.astimezone().replace(tzinfo=None)
+        if isinstance(end_time, datetime) and end_time.tzinfo is not None:
+            end_time = end_time.astimezone().replace(tzinfo=None)
+
         start_iso = start_time.isoformat() if isinstance(start_time, datetime) else str(start_time)
         end_iso = end_time.isoformat() if isinstance(end_time, datetime) else str(end_time)
 

@@ -5,13 +5,15 @@ Enforces the 'Thin Worker, Rich Core Engine' design:
 3. MasterDailyWorker coordinates all 4 sub-workers on a daily schedule with individual retry capabilities.
 """
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import json
 import logging
 import threading
 import time
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
+
+from liftassistant.config import settings
 
 from liftassistant.db.connection import get_db
 from liftassistant.db.repository import (
@@ -31,12 +33,14 @@ from liftassistant.services.inventory_service import InventoryService
 from liftassistant.services.map_service import MapService
 from liftassistant.services.receipt_parser import ReceiptParser
 from liftassistant.services.receipt_service import ReceiptService
+from liftassistant.services.school_menu_service import SchoolMenuService
 
 logger = logging.getLogger(__name__)
 
 # Standardized Worker Types
 WORKER_TYPE_CALENDAR_RULES = "CALENDAR_RULE_WORKER"
 WORKER_TYPE_EMAIL_EVENT = "EMAIL_EVENT_WORKER"
+WORKER_TYPE_SCHOOL_MENU = "SCHOOL_MENU_WORKER"
 WORKER_TYPE_FACILITY_CLOSURE = "FACILITY_CLOSURE_WORKER"
 WORKER_TYPE_INVENTORY_DEPLETION = "INVENTORY_DEPLETION_WORKER"
 
@@ -268,6 +272,116 @@ class EmailEventWorker:
         return run
 
 
+class SchoolMenuWorker:
+    """Thin execution runner for Primrose School lunch menu checking and meal switch reminders."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.worker_type = WORKER_TYPE_SCHOOL_MENU
+
+    def _execute_run(self, run: GeneratorRun, run_type: str = "MANUAL", max_results: int = 10) -> GeneratorRun:
+        """Internal execution runner for school lunch menu perception."""
+        with self._lock:
+            with get_db() as conn:
+                event_repo = EventRepository(conn)
+                place_repo = PlaceRepository(conn)
+                run_repo = GeneratorRunRepository(conn)
+
+                engine = SchoolMenuService(
+                    event_repo=event_repo,
+                    place_repo=place_repo,
+                    gen_run_repo=run_repo,
+                )
+
+                try:
+                    created_events = engine.sync_recent_menus(
+                        max_results=max_results,
+                        run_id=run.id,
+                    )
+                    refreshed = run_repo.get_run(run.id)
+                    if refreshed:
+                        run = refreshed
+                    run.created_count = len(created_events)
+
+                    summary = (
+                        f"Scanned school menu emails. Generated {run.created_count} lunch switch reminder(s) into calendar."
+                    )
+                    details = {}
+                    if run.details_json:
+                        try:
+                            details = json.loads(run.details_json)
+                        except Exception:
+                            pass
+                    details["summary_message"] = summary
+                    details["run_type"] = run_type
+                    details["event_ids"] = [e.id for e in created_events]
+                    details["generated_events"] = [
+                        {
+                            "id": e.id,
+                            "title": e.title,
+                            "event_type": e.event_type,
+                            "scheduled_at": e.scheduled_at.isoformat() if e.scheduled_at else None,
+                            "deadline": e.deadline.isoformat() if e.deadline else None,
+                            "notes": e.notes,
+                        }
+                        for e in created_events
+                    ]
+                    run.details_json = json.dumps(details)
+                    run.status = "SUCCESS"
+                    run.completed_at = datetime.now()
+                    run_repo.update_run(run)
+                    logger.info("SchoolMenuWorker completed: %s", summary)
+                    return run
+                except Exception as exc:
+                    logger.error("SchoolMenuWorker failed: %s", exc, exc_info=True)
+                    run.status = "FAILED"
+                    run.completed_at = datetime.now()
+                    run.error_message = str(exc)
+                    run.details_json = json.dumps({"run_type": run_type, "summary_message": f"Menu sync failed: {exc}"})
+                    run_repo.update_run(run)
+                    raise
+
+    def trigger_run(self, run_type: str = "MANUAL", max_results: int = 10) -> GeneratorRun:
+        """Execute school menu perception synchronously and log run lifecycle."""
+        started_at = datetime.now()
+        with get_db() as conn:
+            run_repo = GeneratorRunRepository(conn)
+            run = GeneratorRun(
+                generator_type=self.worker_type,
+                started_at=started_at,
+                status="RUNNING",
+                details_json=json.dumps({"run_type": run_type, "max_results": max_results}),
+            )
+            run_repo.create_run(run)
+        return self._execute_run(run, run_type=run_type, max_results=max_results)
+
+    def trigger_run_async(self, run_type: str = "MANUAL", max_results: int = 10) -> GeneratorRun:
+        """Immediately record RUNNING in DB and execute menu sync in a background daemon thread."""
+        started_at = datetime.now()
+        with get_db() as conn:
+            run_repo = GeneratorRunRepository(conn)
+            run = GeneratorRun(
+                generator_type=self.worker_type,
+                started_at=started_at,
+                status="RUNNING",
+                details_json=json.dumps({
+                    "run_type": run_type,
+                    "max_results": max_results,
+                    "summary_message": "Scanning school lunch menus in background...",
+                }),
+            )
+            run_repo.create_run(run)
+
+        def _bg():
+            try:
+                self._execute_run(run, run_type=run_type, max_results=max_results)
+            except Exception:
+                pass
+
+        threading.Thread(target=_bg, daemon=True, name=f"{self.worker_type}_async").start()
+        return run
+
+
 class FacilityClosureWorker:
     """Thin execution runner for facility closure verification and conflict synchronization."""
 
@@ -448,15 +562,55 @@ class MasterDailyWorker:
         # Instantiate decoupled thin workers
         self.calendar_worker = CalendarRuleWorker()
         self.email_worker = EmailEventWorker()
+        self.school_menu_worker = SchoolMenuWorker()
         self.facility_worker = FacilityClosureWorker()
         self.depletion_worker = InventoryDepletionWorker()
 
         self._workers = {
             WORKER_TYPE_CALENDAR_RULES: self.calendar_worker,
             WORKER_TYPE_EMAIL_EVENT: self.email_worker,
+            WORKER_TYPE_SCHOOL_MENU: self.school_menu_worker,
             WORKER_TYPE_FACILITY_CLOSURE: self.facility_worker,
             WORKER_TYPE_INVENTORY_DEPLETION: self.depletion_worker,
         }
+
+        self._pipeline = [
+            ("Calendar Rules", self.calendar_worker),
+            ("Email Perception", self.email_worker),
+            ("School Lunch Menu", self.school_menu_worker),
+            ("Facility Closures", self.facility_worker),
+            ("Inventory Depletion", self.depletion_worker),
+        ]
+
+    def register_worker(self, worker_type: str, worker: Any, label: Optional[str] = None) -> None:
+        """Dynamically register future generator workers into the daily execution pipeline."""
+        self._workers[worker_type] = worker
+        display_label = label or worker_type.replace("_", " ").title()
+        if not any(w.worker_type == worker_type for _, w in self._pipeline):
+            self._pipeline.append((display_label, worker))
+        logger.info("Registered generator worker '%s' (%s) into MasterDailyWorker pipeline.", worker_type, display_label)
+
+    def compute_next_run_time(self) -> datetime:
+        """Compute the next scheduled morning execution time (e.g. 7:00 AM from settings)."""
+        now = datetime.now()
+        target_hour = getattr(settings, "home_agent_run_hour", 7)
+        target_today = now.replace(hour=target_hour, minute=0, second=0, microsecond=0)
+        if now < target_today:
+            return target_today
+        return target_today + timedelta(days=1)
+
+    def has_run_completed_today(self) -> bool:
+        """Check if any worker has already completed successfully today."""
+        today_str = date.today().isoformat()
+        try:
+            with get_db() as conn:
+                row = conn.cursor().execute(
+                    "SELECT id FROM generator_runs WHERE date(started_at) = ? AND status = 'SUCCESS' LIMIT 1",
+                    (today_str,),
+                ).fetchone()
+                return row is not None
+        except Exception:
+            return False
 
     def start(self) -> None:
         """Start the background daemon loop."""
@@ -469,7 +623,7 @@ class MasterDailyWorker:
             target=self._run_loop, name="MasterDailyWorkerDaemon", daemon=True
         )
         self._thread.start()
-        logger.info("MasterDailyWorker background daemon started (interval=%ds).", self.interval_seconds)
+        logger.info("MasterDailyWorker background daemon started (morning hour=%d:00).", getattr(settings, "home_agent_run_hour", 7))
 
     def stop(self) -> None:
         """Signal background thread to terminate."""
@@ -479,12 +633,30 @@ class MasterDailyWorker:
         logger.info("MasterDailyWorker stopped.")
 
     def _run_loop(self) -> None:
-        """Worker loop that executes the daily master pipeline."""
+        """Worker loop that executes the daily master pipeline every morning at 7:00 AM (with catch-up on boot)."""
         logger.info("MasterDailyWorker run loop initialized.")
-        self.next_run_time = datetime.now() + timedelta(seconds=self.interval_seconds)
+
+        # 1. Startup catch-up check: if today's run has not occurred yet, run after a brief 10s warmup
+        if not self.has_run_completed_today():
+            logger.info("No successful worker run found for today (%s). Scheduling catch-up run in 10s...", date.today().isoformat())
+            for _ in range(10):
+                if self._stop_event.is_set():
+                    return
+                time.sleep(1)
+
+            if not self._stop_event.is_set():
+                try:
+                    logger.info("Executing startup catch-up daily worker run...")
+                    self.run_all(run_type="CATCHUP")
+                except Exception as exc:
+                    logger.error("Catch-up daily worker run failed: %s", exc)
 
         while not self._stop_event.is_set():
-            for _ in range(self.interval_seconds):
+            self.next_run_time = self.compute_next_run_time()
+            wait_seconds = max(1, int((self.next_run_time - datetime.now()).total_seconds()))
+            logger.info("Next MasterDailyWorker scheduled run: %s (in %d seconds).", self.next_run_time.isoformat(), wait_seconds)
+
+            for _ in range(wait_seconds):
                 if self._stop_event.is_set():
                     break
                 time.sleep(1)
@@ -492,28 +664,19 @@ class MasterDailyWorker:
             if self._stop_event.is_set():
                 break
 
-            logger.info("MasterDailyWorker scheduled trigger firing...")
+            logger.info("MasterDailyWorker scheduled trigger firing at %s...", datetime.now().isoformat())
             try:
                 self.run_all(run_type="SCHEDULED")
             except Exception as e:
                 logger.error("MasterDailyWorker scheduled execution encountered an error: %s", e)
 
-            self.next_run_time = datetime.now() + timedelta(seconds=self.interval_seconds)
-
     def run_all(self, run_type: str = "MANUAL") -> Dict[str, Any]:
-        """Execute all 4 workers in sequence with complete failure isolation."""
+        """Execute all workers in sequence with complete failure isolation."""
         self.last_run_time = datetime.now()
         results: Dict[str, Any] = {}
         errors: Dict[str, str] = {}
 
-        pipeline = [
-            ("Calendar Rules", self.calendar_worker),
-            ("Email Perception", self.email_worker),
-            ("Facility Closures", self.facility_worker),
-            ("Inventory Depletion", self.depletion_worker),
-        ]
-
-        for label, worker in pipeline:
+        for label, worker in self._pipeline:
             try:
                 run = worker.trigger_run(run_type=run_type)
                 results[worker.worker_type] = {
@@ -624,6 +787,9 @@ class MasterDailyWorker:
             "FACILITY_WORKER": WORKER_TYPE_FACILITY_CLOSURE,
             "DEPLETION_WORKER": WORKER_TYPE_INVENTORY_DEPLETION,
             "CALENDAR_RULE_GENERATOR": WORKER_TYPE_CALENDAR_RULES,
+            "SCHOOL_MENU": WORKER_TYPE_SCHOOL_MENU,
+            "SCHOOL_MENU_WORKER": WORKER_TYPE_SCHOOL_MENU,
+            "PRIMROSE_WORKER": WORKER_TYPE_SCHOOL_MENU,
         }
         resolved = alias_map.get(worker_type, worker_type)
         worker = self._workers.get(resolved)

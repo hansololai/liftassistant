@@ -1,13 +1,18 @@
 import {
   ConflictItem,
+  DepletionProposal,
   EmailWorkerStatus,
+  EventGeneratorItem,
   EventItem,
   GeneratorFeedbackItem,
   GeneratorRunItem,
   LearnedPromptRuleItem,
   PlaceItem,
   ProductItem,
+  ProductUnitConversion,
+  ShoppingListItem,
   StoreItemMultiplier,
+  TripItem,
 } from '../types';
 
 const API_BASE = '/api/v1';
@@ -32,12 +37,56 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     ...(init?.headers as Record<string, string> || {}),
   };
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    signal: init?.signal || (typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal ? AbortSignal.timeout(10000) : undefined),
-    ...init,
-    credentials: 'include', // Guarantees 10-year HttpOnly cookie is always sent automatically!
-    headers,
-  });
+  const defaultTimeout = path.includes('/ingest/') ? 120000 : 30000;
+  const signal = init?.signal || (typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal ? AbortSignal.timeout(defaultTimeout) : undefined);
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      signal,
+      credentials: 'include', // Guarantees 10-year HttpOnly cookie is always sent automatically!
+      headers,
+    });
+  } catch (err: any) {
+    const errStr = String(err?.message || err || '').toLowerCase();
+    const isAbort =
+      err?.name === 'AbortError' ||
+      err?.name === 'TimeoutError' ||
+      errStr.includes('abort') ||
+      errStr.includes('timeout');
+
+    if (isAbort) {
+      if (path.includes('/ingest/upload')) {
+        throw new ApiError(
+          'Photo processing timed out. The Vision AI model took longer than 2 minutes to analyze the image. Please try again with a clearer or closer photo of just the receipt.',
+          408
+        );
+      }
+      throw new ApiError(
+        'Request timed out. The server took longer than expected to respond. Please check your network connection and try again.',
+        408
+      );
+    }
+
+    const isNetworkError =
+      err?.name === 'TypeError' ||
+      errStr.includes('failed to fetch') ||
+      errStr.includes('network') ||
+      errStr.includes('load failed');
+
+    if (isNetworkError) {
+      throw new ApiError(
+        'Unable to connect to the LiftAssistant server. Please verify the backend is running and reachable.',
+        503
+      );
+    }
+
+    throw new ApiError(
+      err?.message || 'An unexpected error occurred while communicating with the server.',
+      500
+    );
+  }
 
   const text = await response.text();
   let data: any = null;
@@ -50,13 +99,31 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
-    const errMsg =
-      data?.message ||
-      data?.detail ||
-      data?.error ||
-      `Request failed with status ${response.status}`;
+    let errMsg = data?.detail || data?.message || data?.error;
+    if (Array.isArray(errMsg)) {
+      errMsg = errMsg
+        .map((e: any) => e.msg || e.message || (typeof e === 'string' ? e : JSON.stringify(e)))
+        .join('; ');
+    } else if (typeof errMsg === 'object' && errMsg !== null) {
+      errMsg = errMsg.msg || errMsg.message || JSON.stringify(errMsg);
+    }
+
+    if (!errMsg || typeof errMsg !== 'string' || errMsg.trim() === '') {
+      if (response.status === 413) {
+        errMsg = 'The uploaded photo is too large for the server to process. Please try a smaller image.';
+      } else if (response.status === 422) {
+        errMsg = 'The receipt could not be parsed by the Vision model. Please ensure the receipt photo is clear and contains a visible store name, date, and total.';
+      } else if (response.status === 504) {
+        errMsg = 'Gateway timeout: Vision AI processing timed out on the server.';
+      } else if (response.status === 500) {
+        errMsg = 'Internal server error while processing the request. Please check the server logs.';
+      } else {
+        errMsg = `Request failed with status ${response.status}`;
+      }
+    }
+
     throw new ApiError(
-      typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg),
+      String(errMsg),
       response.status,
       data?.detail
     );
@@ -99,11 +166,13 @@ export interface CreateScheduledEventPayload {
   title: string;
   event_type: string;
   scheduled_at?: string;
+  scheduled_end_at?: string;
   duration_minutes?: number;
   deadline?: string;
   completed_at?: string;
   place_id?: string;
   place_name?: string;
+  studio?: string;
   place_query?: string;
   latitude?: number;
   longitude?: number;
@@ -187,6 +256,128 @@ export const apiClient = {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  },
+
+  /** List products in pantry inventory with live burn rates and computed days of runway. */
+  async listProducts(limit = 100, offset = 0): Promise<ProductItem[]> {
+    const raw = await requestJson<any>(`/inventory/products?limit=${limit}&offset=${offset}`);
+    const items: any[] = Array.isArray(raw) ? raw : (raw?.result || raw?.items || []);
+    return items.map((p) => ({
+      ...p,
+      name: p.name || p.product_name || 'Product',
+      category: p.category || 'pantry',
+      current_stock: p.current_stock !== undefined ? Number(p.current_stock) : 0,
+      unit: p.unit || p.qu_stock_id || 'ea',
+      purchase_unit: p.qu_purchase_id || p.purchase_unit || 'pack',
+      unit_multiplier: p.qu_factor !== undefined ? Number(p.qu_factor) : (p.unit_multiplier || 1),
+      daily_burn_rate: p.daily_burn_rate !== undefined ? Number(p.daily_burn_rate) : 0,
+      days_runway: p.days_runway !== undefined ? Number(p.days_runway) : 999,
+      store_name: p.store_name || 'Costco',
+      location: p.location || 'Pantry',
+      is_fridge_quick_tile: Boolean(p.is_fridge_quick_tile),
+    }));
+  },
+
+  /** Decrement product stock via 1-tap fridge door pad. */
+  async consumeProduct(productId: string, amount?: number): Promise<any> {
+    return requestJson<any>(`/inventory/products/${encodeURIComponent(productId)}/consume`, {
+      method: 'POST',
+      body: JSON.stringify(amount !== undefined ? { amount } : {}),
+    });
+  },
+
+  /** Undo accidental fridge pad tap. */
+  async undoConsumeProduct(productId: string): Promise<any> {
+    return requestJson<any>(`/inventory/products/${encodeURIComponent(productId)}/undo-consume`, {
+      method: 'POST',
+    });
+  },
+
+  /** List purchase-to-stock bulk multipliers. */
+  async listConversions(): Promise<ProductUnitConversion[]> {
+    const raw = await requestJson<any>('/inventory/conversions');
+    return Array.isArray(raw) ? raw : (raw?.result || []);
+  },
+
+  /** List pending depletion proposals. */
+  async listDepletions(): Promise<DepletionProposal[]> {
+    const raw = await requestJson<any>('/inventory/proposals');
+    const items: any[] = Array.isArray(raw) ? raw : (raw?.result || []);
+    return items.map((d: any) => ({
+      id: d.id,
+      product_id: d.product_id,
+      product_name: d.product_name || 'Pantry Item',
+      proposed_deduction: Number(d.proposed_deduction ?? d.proposed_amount ?? d.amount ?? 1),
+      unit: d.unit || 'ea',
+      days_interval: d.days_interval !== undefined ? Number(d.days_interval) : 7,
+      estimated_burn_rate: d.estimated_burn_rate || d.reason || `${d.proposed_deduction ?? d.proposed_amount ?? 1} ${d.unit || 'ea'} / wk`,
+    }));
+  },
+
+  /** Confirm depletion proposal and deduct from stock ledger. */
+  async confirmDepletion(proposalId: string): Promise<any> {
+    return requestJson<any>(`/inventory/proposals/${encodeURIComponent(proposalId)}/confirm`, {
+      method: 'POST',
+    });
+  },
+
+  /** Dismiss depletion proposal without deducting stock. */
+  async dismissDepletion(proposalId: string): Promise<any> {
+    return requestJson<any>(`/inventory/proposals/${encodeURIComponent(proposalId)}/dismiss`, {
+      method: 'POST',
+    });
+  },
+
+  /** Fetch 7-day rolling horizon shopping list. */
+  async listShoppingList(): Promise<ShoppingListItem[]> {
+    const raw = await requestJson<any>('/shopping/shopping-list');
+    const items: any[] = Array.isArray(raw) ? raw : (raw?.result || []);
+    return items.map((it: any) => ({
+      id: it.id,
+      product_id: it.product_id,
+      item_name: it.item_name || it.product_name || 'Item',
+      category: it.category || 'grocery',
+      amount: it.amount !== undefined ? Number(it.amount) : 1,
+      unit: it.unit || 'ea',
+      store_name: it.store_name || 'Costco',
+      days_runway: it.days_runway !== undefined ? Number(it.days_runway) : 7,
+      checked: Boolean(it.checked),
+    }));
+  },
+
+  /** Toggle checked state of shopping list item. */
+  async toggleShoppingItem(itemId: string): Promise<any> {
+    return requestJson<any>(`/shopping/${encodeURIComponent(itemId)}/toggle`, {
+      method: 'POST',
+    });
+  },
+
+  /** List recurring event generators. */
+  async listGenerators(): Promise<EventGeneratorItem[]> {
+    const raw = await requestJson<any>('/generators');
+    return Array.isArray(raw) ? raw : (raw?.result || []);
+  },
+
+  /** Create recurring event generator. */
+  async createGenerator(payload: any): Promise<EventGeneratorItem> {
+    return requestJson<EventGeneratorItem>('/generators', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  /** Force spawn an event from a generator rule. */
+  async spawnGenerator(genId: string): Promise<EventItem> {
+    const raw = await requestJson<any>(`/generators/${encodeURIComponent(genId)}/spawn`, {
+      method: 'POST',
+    });
+    return normalizeEventFromApi(raw);
+  },
+
+  /** List trips and their itinerary stops. */
+  async listTrips(): Promise<TripItem[]> {
+    const raw = await requestJson<any>('/trips');
+    return Array.isArray(raw) ? raw : (raw?.result || []);
   },
 
   /** List unit multipliers for (store, item, multiplier) 3-column table. */
@@ -419,6 +610,21 @@ export const apiClient = {
     });
   },
 
+  /** Trigger an immediate manual run of the Primrose School Lunch Menu Worker. */
+  async triggerSchoolMenuWorkerRun(maxResults = 10): Promise<{ run: GeneratorRunItem; summary_message: string }> {
+    return requestJson<{ run: GeneratorRunItem; summary_message: string }>(`/generators/school-menu/run?max_results=${maxResults}`, {
+      method: 'POST',
+    });
+  },
+
+  /** Directly parse school lunch menu text and generate meal switch reminders. */
+  async parseSchoolMenuText(text: string, referenceDate?: string): Promise<{ created_count: number; events: any[]; summary_message: string }> {
+    return requestJson<{ created_count: number; events: any[]; summary_message: string }>('/generators/school-menu/parse-text', {
+      method: 'POST',
+      body: JSON.stringify({ text, reference_date: referenceDate }),
+    });
+  },
+
   /** List events generated from email with AI perception reasoning and review feedback status. */
   async listGeneratedEmailEvents(limit = 100): Promise<GeneratorFeedbackItem[]> {
     return requestJson<GeneratorFeedbackItem[]>(`/generators/email/events?limit=${limit}`);
@@ -494,6 +700,9 @@ export const apiClient = {
   }> {
     const formData = new FormData();
     formData.append('file', file);
+    const timeoutSignal = typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal
+      ? AbortSignal.timeout(120000)
+      : undefined;
     const res = await requestJson<{
       success: boolean;
       message: string;
@@ -503,6 +712,7 @@ export const apiClient = {
     }>('/ingest/upload', {
       method: 'POST',
       body: formData,
+      signal: timeoutSignal,
     });
     return {
       ...res,

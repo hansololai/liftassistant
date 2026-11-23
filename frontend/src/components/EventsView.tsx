@@ -60,6 +60,7 @@ import {
   IconSettings,
   IconInfoCircle,
   IconBuildingStore,
+  IconToolsKitchen2,
 } from '@tabler/icons-react';
 import { apiClient, ConflictCheckResult } from '../api/client';
 import {
@@ -221,6 +222,7 @@ export const EventsView: React.FC<Props> = ({
   const [workerStatus, setWorkerStatus] = useState<EmailWorkerStatus | null>(null);
   const [isLoadingEmailData, setIsLoadingEmailData] = useState(false);
   const [isSyncingEmail, setIsSyncingEmail] = useState(false);
+  const [isSyncingMenu, setIsSyncingMenu] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   // Review & Feedback Modals
@@ -424,6 +426,21 @@ export const EventsView: React.FC<Props> = ({
       setSyncMessage(`Sync failed: ${err?.message || 'Check Gmail authentication or Ollama connection'}`);
     } finally {
       setIsSyncingEmail(false);
+    }
+  };
+
+  const handleCheckSchoolMenu = async () => {
+    setIsSyncingMenu(true);
+    setSyncMessage(null);
+    try {
+      const res = await apiClient.triggerSchoolMenuWorkerRun(10);
+      setSyncMessage(res.summary_message || 'Primrose school lunch menu sync started in background...');
+      await loadEmailGeneratorData();
+      if (onRefreshEvents) void onRefreshEvents();
+    } catch (err: any) {
+      setSyncMessage(`School menu sync failed: ${err?.message || 'Check connection'}`);
+    } finally {
+      setIsSyncingMenu(false);
     }
   };
 
@@ -684,7 +701,7 @@ export const EventsView: React.FC<Props> = ({
         }
         setCheckingConflict(true);
         const res = await apiClient.checkConflict({
-          scheduled_at: parsedDate.toISOString(),
+          scheduled_at: formatDatetimeLocal(parsedDate),
           duration_minutes: durationMinutes,
           title: title.trim() || 'Proposed Event',
           people_involved: selectedPeople,
@@ -835,7 +852,7 @@ export const EventsView: React.FC<Props> = ({
       }
 
       const computedEnd = !isNaN(start.getTime())
-        ? new Date(start.getTime() + durationMinutes * 60000).toISOString()
+        ? formatDatetimeLocal(new Date(start.getTime() + durationMinutes * 60000))
         : undefined;
 
       const newEvent: EventItem = {
@@ -903,7 +920,7 @@ export const EventsView: React.FC<Props> = ({
     }
   };
 
-  const getCategoryBadgeColor = (type: EventType) => {
+  const getCategoryBadgeColor = (type: EventType | string) => {
     switch (type) {
       case 'DINING':
         return 'teal';
@@ -911,6 +928,8 @@ export const EventsView: React.FC<Props> = ({
         return 'blue';
       case 'MAINTENANCE':
         return 'orange';
+      case 'SCHOOL_LUNCH':
+        return 'grape';
       default:
         return 'gray';
     }
@@ -933,7 +952,7 @@ export const EventsView: React.FC<Props> = ({
             <Button
               color="indigo"
               variant="light"
-              leftSection={<IconRepeat size={16} />}
+              leftSection={<IconRepeat size={14} />}
               onClick={() => handleOpenEventModal(true)}
               size="xs"
             >
@@ -941,17 +960,17 @@ export const EventsView: React.FC<Props> = ({
             </Button>
             <Button
               color="blue"
-              leftSection={<IconPlus size={16} />}
+              leftSection={<IconPlus size={14} />}
               onClick={() => handleOpenEventModal(false)}
-              size="sm"
+              size="xs"
             >
               Add Event
             </Button>
           </Group>
         </Group>
 
-        {/* Filter Chips & Sort Controls */}
-        <Group justify="space-between" mt="sm" wrap="wrap">
+        {/* Filter Chips */}
+        <Box mt="sm">
           <Chip.Group value={filterType} onChange={(v) => setFilterType(v as string)}>
             <Group gap="xs">
               <Chip value="ALL" size="xs">All</Chip>
@@ -961,24 +980,7 @@ export const EventsView: React.FC<Props> = ({
               <Chip value="CUSTOM" size="xs">Custom</Chip>
             </Group>
           </Chip.Group>
-
-          {activeTab === 'upcoming' && (
-            <Group gap={6}>
-              <Text size="11px" c="dimmed" fw={600}>
-                Sort:
-              </Text>
-              <SegmentedControl
-                size="xs"
-                value={sortBy}
-                onChange={(v) => setSortBy(v as 'deadline' | 'scheduled')}
-                data={[
-                  { label: '⏳ Deadline Urgency', value: 'deadline' },
-                  { label: '📅 Scheduled Date', value: 'scheduled' },
-                ]}
-              />
-            </Group>
-          )}
-        </Group>
+        </Box>
       </Card>
 
       {/* Tabs: Upcoming vs Completed vs Recurring Generators */}
@@ -1006,6 +1008,31 @@ export const EventsView: React.FC<Props> = ({
             </Group>
           </Tabs.Tab>
         </Tabs.List>
+
+        {/* Sort Controls & Counter under the three tabs */}
+        {(activeTab === 'upcoming' || activeTab === 'completed') && (
+          <Group justify="space-between" align="center" mb="sm" wrap="wrap">
+            <Text size="xs" c="dimmed">
+              {activeTab === 'upcoming'
+                ? `${filterEvents(upcomingEvents).length} upcoming tasks`
+                : `${filterEvents(completedEvents).length} completed records`}
+            </Text>
+            <Group gap={6}>
+              <Text size="11px" c="dimmed" fw={600}>
+                Sort:
+              </Text>
+              <SegmentedControl
+                size="xs"
+                value={sortBy}
+                onChange={(v) => setSortBy(v as 'deadline' | 'scheduled')}
+                data={[
+                  { label: '⏳ Deadline Urgency', value: 'deadline' },
+                  { label: '📅 Scheduled Date', value: 'scheduled' },
+                ]}
+              />
+            </Group>
+          </Group>
+        )}
 
         {/* Tab 1: Upcoming Future Tasks */}
         <Tabs.Panel value="upcoming">
@@ -1047,9 +1074,9 @@ export const EventsView: React.FC<Props> = ({
               data={[
                 {
                   label: (
-                    <Group gap="xs" justify="center">
-                      <IconMail size={16} />
-                      <Text size="xs" fw={600}>Email AI Perception Generator</Text>
+                    <Group gap={4} justify="center" wrap="nowrap">
+                      <IconMail size={15} />
+                      <Text size="xs" fw={600}>Email Perception</Text>
                       {emailFeedbacks.filter((f) => f.user_status === 'PENDING').length > 0 && (
                         <Badge size="xs" color="orange" variant="filled" circle>
                           {emailFeedbacks.filter((f) => f.user_status === 'PENDING').length}
@@ -1061,9 +1088,9 @@ export const EventsView: React.FC<Props> = ({
                 },
                 {
                   label: (
-                    <Group gap="xs" justify="center">
-                      <IconRepeat size={16} />
-                      <Text size="xs" fw={600}>Recurring Calendar Rules</Text>
+                    <Group gap={4} justify="center" wrap="nowrap">
+                      <IconRepeat size={15} />
+                      <Text size="xs" fw={600}>Recurring Rules</Text>
                       <Badge size="xs" color="gray" variant="light">
                         {generators.length}
                       </Badge>
@@ -1123,6 +1150,16 @@ export const EventsView: React.FC<Props> = ({
                         onClick={handleSyncNow}
                       >
                         Sync Now
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        color="grape"
+                        loading={isSyncingMenu}
+                        leftSection={<IconToolsKitchen2 size={14} />}
+                        onClick={handleCheckSchoolMenu}
+                      >
+                        Check Primrose Menu
                       </Button>
                     </Group>
                   </Group>
@@ -1468,30 +1505,6 @@ export const EventsView: React.FC<Props> = ({
             ) : (
               /* Existing Tab: Recurring Calendar Generators */
               <Stack gap="sm">
-                <Card withBorder radius="md" p="sm" bg="gray.0">
-                  <Group justify="space-between">
-                    <Box>
-                      <Text size="xs" fw={700}>
-                        Auto-Generating Calendar Rules
-                      </Text>
-                      <Text size="11px" c="dimmed">
-                        Annual, monthly, and recurring events automatically spawn tasks with advance lead time and strict deadlines.
-                      </Text>
-                    </Box>
-                    <Button
-                      size="xs"
-                      color="indigo"
-                      leftSection={<IconPlus size={14} />}
-                      onClick={() => {
-                        setIsRecurring(true);
-                        setModalOpened(true);
-                      }}
-                    >
-                      New Generator
-                    </Button>
-                  </Group>
-                </Card>
-
                 {generators.map((gen) => (
                   <Card key={gen.id} withBorder radius="md" p="sm" shadow="xs">
                     <Group justify="space-between" align="flex-start">
@@ -1949,9 +1962,22 @@ export const EventsView: React.FC<Props> = ({
                   leftSection={<IconClock size={16} />}
                 />
                 {conflictWarning && conflictWarning.has_conflict && (
-                  <Text size="11px" c="red.8" fw={500} mt={4} truncate>
-                    ⚠️ {conflictWarning.conflicts[0]?.title || 'Conflict detected on calendar'}
-                  </Text>
+                  <Alert
+                    icon={<IconAlertTriangle size={16} />}
+                    color="red"
+                    variant="light"
+                    mt="xs"
+                    radius="md"
+                    title={conflictWarning.conflicts[0]?.title || 'Conflict Detected'}
+                    styles={{ title: { fontSize: '12px', fontWeight: 600 }, message: { fontSize: '11px' } }}
+                  >
+                    {conflictWarning.conflicts[0]?.description || 'This event conflicts with an existing closure or class.'}
+                    {conflictWarning.conflicts[0]?.suggested_action && (
+                      <Text size="11px" c="dimmed" mt={4}>
+                        💡 {conflictWarning.conflicts[0].suggested_action}
+                      </Text>
+                    )}
+                  </Alert>
                 )}
               </Box>
 

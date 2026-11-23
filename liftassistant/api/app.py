@@ -217,6 +217,30 @@ def create_app() -> FastAPI:
     app.include_router(ingest.router, prefix=api_prefix)
     app.include_router(trips.router, prefix=api_prefix)
 
+    # 5. Serve Frontend Static SPA (Single-Container Production Mode)
+    import os
+    from fastapi.staticfiles import StaticFiles
+    from starlette.responses import FileResponse
+
+    frontend_dist = os.environ.get("FRONTEND_DIST", "frontend/dist")
+    if os.path.isdir(frontend_dist):
+        assets_dir = os.path.join(frontend_dist, "assets")
+        if os.path.isdir(assets_dir):
+            app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def serve_spa(full_path: str):
+            # Do not hijack API or documentation routes
+            if full_path.startswith("api/") or full_path in ("docs", "redoc", "openapi.json"):
+                raise HTTPException(status_code=404, detail="Not Found")
+            file_path = os.path.join(frontend_dist, full_path)
+            if full_path and os.path.isfile(file_path):
+                return FileResponse(file_path)
+            index_path = os.path.join(frontend_dist, "index.html")
+            if os.path.isfile(index_path):
+                return FileResponse(index_path)
+            raise HTTPException(status_code=404, detail="Frontend index.html not found")
+
     return app
 
 

@@ -8,14 +8,14 @@ import {
   Collapse,
   Stack,
   Box,
-  Button,
   Paper,
   Tooltip,
   Rating,
-  Divider,
 } from '@mantine/core';
 import {
   IconCheck,
+  IconCircleCheck,
+  IconCircleCheckFilled,
   IconClock,
   IconMapPin,
   IconUser,
@@ -23,7 +23,6 @@ import {
   IconChevronUp,
   IconPencil,
   IconHourglassEmpty,
-  IconRotateClockwise,
 } from '@tabler/icons-react';
 import { EventItem } from '../types';
 import { PersonBadge } from './PersonBadge';
@@ -56,16 +55,17 @@ const getDeadlineBadge = (deadline?: string) => {
   const dDate = new Date(deadline);
   const now = new Date();
   const diffDays = Math.ceil((dDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+  const badgeStyle = { fontSize: '10px', height: 18, padding: '0 6px' };
 
   if (diffDays < 0) {
-    return <Badge color="red" size="xs" variant="filled">Overdue ({Math.abs(diffDays)}d)</Badge>;
+    return <Badge color="red" size="xs" variant="filled" style={badgeStyle}>Overdue ({Math.abs(diffDays)}d)</Badge>;
   } else if (diffDays === 0) {
-    return <Badge color="orange" size="xs" variant="filled">Due Today</Badge>;
+    return <Badge color="orange" size="xs" variant="filled" style={badgeStyle}>Due Today</Badge>;
   } else if (diffDays <= 3) {
-    return <Badge color="yellow" size="xs" variant="filled">Due in {diffDays}d</Badge>;
+    return <Badge color="yellow" size="xs" variant="filled" style={badgeStyle}>Due in {diffDays}d</Badge>;
   }
   return (
-    <Badge color="gray" size="xs" variant="light">
+    <Badge color="gray" size="xs" variant="light" style={badgeStyle}>
       Due {dDate.toLocaleDateString([], { month: 'short', day: 'numeric' })}
     </Badge>
   );
@@ -122,65 +122,97 @@ export const EventCard: React.FC<EventCardProps> = ({
     <Card
       withBorder
       radius="md"
-      p="sm"
+      p={{ base: 'xs', sm: 'sm' }}
       shadow="xs"
       bg={isCompleted ? 'gray.0' : 'white'}
       style={{
+        width: '100%',
         borderColor: event.has_conflict ? 'var(--mantine-color-red-3)' : undefined,
         cursor: 'pointer',
         transition: 'background-color 150ms ease, border-color 150ms ease',
       }}
       onClick={() => setIsExpanded((prev) => !prev)}
     >
-      {/* Line 1: Name, Category, Badges & Action Icons (Edit + Chevron) */}
-      <Group justify="space-between" align="center" wrap="nowrap" gap="xs">
-        <Group gap={6} wrap="nowrap" style={{ overflow: 'hidden', minWidth: 0, flex: 1 }}>
-          {onToggleComplete && (
-            <ActionIcon
-              size="xs"
-              variant={isCompleted ? 'filled' : 'subtle'}
-              color={isCompleted ? 'teal' : 'gray'}
-              radius="xl"
-              onClick={(e: React.MouseEvent) => {
-                e.stopPropagation();
-                onToggleComplete(event.id);
-              }}
-              title={isCompleted ? 'Mark incomplete' : 'Mark completed'}
-              style={{ flexShrink: 0 }}
-            >
-              <IconCheck size={12} />
-            </ActionIcon>
-          )}
-
-          <Text
-            fw={700}
-            size="sm"
-            truncate
-            td={isCompleted ? 'line-through' : undefined}
-            c={isCompleted ? 'dimmed' : undefined}
-          >
-            {event.title}
-          </Text>
-
-          <Badge size="xs" color={getCategoryBadgeColor(event.event_type)} variant="light" style={{ flexShrink: 0 }}>
-            {event.event_type.replace('_', ' ')}
-          </Badge>
-
-          {event.has_conflict && (
-            <Badge size="xs" color="red" variant="filled" style={{ flexShrink: 0 }}>
-              ⚠️ Conflict
-            </Badge>
-          )}
-
-          {amount ? (
-            <Badge size="xs" color="green" variant="light" style={{ flexShrink: 0 }}>
-              ${amount.toFixed(2)}
-            </Badge>
+      {/* Line 1: Checkbox, Full Title (wraps naturally), Badges, & Action Icons */}
+      <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs">
+        <Group gap={8} wrap="nowrap" align="flex-start" style={{ minWidth: 0, flex: 1 }}>
+          {onToggleComplete ? (
+            <Tooltip label={isCompleted ? 'Mark incomplete' : 'Mark completed'}>
+              <ActionIcon
+                size="xs"
+                variant="subtle"
+                color={isCompleted ? 'teal' : 'gray'}
+                radius="xl"
+                onClick={(e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  onToggleComplete(event.id);
+                }}
+                aria-label={isCompleted ? 'Mark incomplete' : 'Mark completed'}
+                style={{ flexShrink: 0, marginTop: 2 }}
+              >
+                {isCompleted ? (
+                  <IconCircleCheckFilled size={18} color="var(--mantine-color-teal-6)" />
+                ) : (
+                  <IconCircleCheck size={18} color="var(--mantine-color-gray-4)" />
+                )}
+              </ActionIcon>
+            </Tooltip>
+          ) : isCompleted ? (
+            <Tooltip label="Completed event">
+              <IconCircleCheckFilled size={18} color="var(--mantine-color-teal-6)" style={{ flexShrink: 0, marginTop: 2 }} />
+            </Tooltip>
           ) : null}
+
+          <Box style={{ minWidth: 0, flex: 1 }}>
+            <Text
+              fw={700}
+              size="sm"
+              style={{
+                lineHeight: 1.35,
+                wordBreak: 'break-word',
+              }}
+            >
+              {event.title}
+            </Text>
+
+            {/* Badges Row (wraps cleanly without compressing the title) */}
+            <Group gap={4} mt={3} wrap="wrap">
+              <Badge
+                size="xs"
+                color={getCategoryBadgeColor(event.event_type)}
+                variant="light"
+                style={{ fontSize: '10px', height: 18, padding: '0 6px', textTransform: 'capitalize' }}
+              >
+                {event.event_type.replace('_', ' ').toLowerCase()}
+              </Badge>
+
+              {event.has_conflict && (
+                <Badge
+                  size="xs"
+                  color="red"
+                  variant="light"
+                  style={{ fontSize: '10px', height: 18, padding: '0 6px' }}
+                >
+                  ⚠️ Conflict
+                </Badge>
+              )}
+
+              {amount && !event.title.includes(`$${amount.toFixed(2)}`) ? (
+                <Badge
+                  size="xs"
+                  color="teal"
+                  variant="outline"
+                  style={{ fontSize: '10px', height: 18, padding: '0 6px' }}
+                >
+                  ${amount.toFixed(2)}
+                </Badge>
+              ) : null}
+            </Group>
+          </Box>
         </Group>
 
         {/* Right Action Icons: Edit & Expand */}
-        <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+        <Group gap={2} wrap="nowrap" style={{ flexShrink: 0, marginTop: 1 }}>
           {onSelectEvent && (
             <Tooltip label="Edit Event">
               <ActionIcon
@@ -302,43 +334,6 @@ export const EventCard: React.FC<EventCardProps> = ({
               </Text>
             </Paper>
           )}
-
-          <Divider my={4} />
-
-          {/* Action Buttons Row */}
-          <Group justify="space-between" mt={2} wrap="nowrap">
-            <div>
-              {onToggleComplete && (
-                <Button
-                  size="compact-xs"
-                  variant="light"
-                  color={isCompleted ? 'gray' : 'teal'}
-                  leftSection={isCompleted ? <IconRotateClockwise size={12} /> : <IconCheck size={12} />}
-                  onClick={(e: React.MouseEvent) => {
-                    e.stopPropagation();
-                    onToggleComplete(event.id);
-                  }}
-                >
-                  {isCompleted ? 'Mark Incomplete' : 'Complete Event'}
-                </Button>
-              )}
-            </div>
-
-            {onSelectEvent && (
-              <Button
-                size="compact-xs"
-                variant="subtle"
-                color="blue"
-                leftSection={<IconPencil size={12} />}
-                onClick={(e: React.MouseEvent) => {
-                  e.stopPropagation();
-                  onSelectEvent(event);
-                }}
-              >
-                Edit Event
-              </Button>
-            )}
-          </Group>
         </Stack>
       </Collapse>
     </Card>

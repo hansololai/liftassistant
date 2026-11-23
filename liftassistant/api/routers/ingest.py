@@ -293,14 +293,48 @@ async def upload_receipt_and_create_event(
 
     clean_event_id = f"evt_{file_hash[:8]}"
 
-    # Classify preliminary DINING vs SHOPPING keywords
+    # Classify preliminary DINING vs SHOPPING
+    # 1. Keywords in merchant name or address
     dining_keywords = [
-        "olive garden", "restaurant", "cafe", "café", "bistro", "grill", "bakery",
-        "diner", "pizzeria", "steakhouse", "bar & grill", "kitchen", "eatery",
-        "ziosk", "table no", "server:", "chipotle", "starbucks", "mcdonald", "burger",
-        "dining", "food truck", "tacos", "sushi", "mad mex",
+        "restaurant", "cafe", "café", "bistro", "grill", "bakery", "diner", "pizzeria",
+        "steakhouse", "bar & grill", "kitchen", "eatery", "ziosk", "table no", "server:",
+        "chipotle", "starbucks", "mcdonald", "burger", "dining", "food truck", "tacos",
+        "sushi", "mad mex", "chuan", "szechuan", "sichuan", "cuisine", "wok", "noodle",
+        "ramen", "cantina", "bbq", "barbecue", "buffet", "dumpling", "hot pot", "taqueria",
+        "brewery", "pub", "inn", "lounge", "deli", "trattoria", "osteria", "pizzaria",
+        "thai", "curry", "pho", "shabu", "tapas", "dim sum", "lao sze", "chuán", "olive garden"
     ]
     is_dining = any(k in merchant.lower() for k in dining_keywords)
+
+    # 2. Check receipt model category tag from Vision LLM
+    if getattr(receipt, "category", None) and str(receipt.category).upper() == "DINING":
+        is_dining = True
+    elif (receipt.tip_amount or 0.0) > 0.0:
+        is_dining = True
+
+    # 3. Check raw OCR json if LLM returned category
+    if not is_dining and receipt.raw_ocr_json:
+        try:
+            raw_j = json.loads(receipt.raw_ocr_json)
+            if str(raw_j.get("category", "")).upper() == "DINING":
+                is_dining = True
+        except Exception:
+            pass
+
+    # 4. Check line items for prepared dishes (entrees, soups, sides)
+    dining_dish_keywords = [
+        "chicken", "pork", "beef", "lamb", "tofu", "rice", "noodle", "soup", "ribs",
+        "salad", "curry", "roll", "sandwich", "burger", "pizza", "wings", "fries",
+        "tacos", "pasta", "tea", "beer", "wine", "entree", "appetizer", "spare ribs",
+        "intestines", "bean curd"
+    ]
+    if not is_dining and receipt.line_items:
+        dish_matches = sum(
+            1 for item in receipt.line_items
+            if any(dk in (item.clean_name or "").lower() for dk in dining_dish_keywords)
+        )
+        if dish_matches >= 2:
+            is_dining = True
 
     # Ground or resolve Place entity (MANDATORY REQUIREMENT)
     place = None
@@ -331,7 +365,7 @@ async def upload_receipt_and_create_event(
             place = map_service.create_grounded_place(
                 name=merchant,
                 address=receipt.merchant_address.strip(),
-                category="dining" if is_dining else "shopping",
+                category="dining" if is_dining else None,
             )
         except Exception as e:
             logger.info("Could not auto-ground place via MapService: %s", e)
@@ -356,9 +390,13 @@ async def upload_receipt_and_create_event(
             detail=f"Receipt could not be parsed: place '{merchant}' could not be found or grounded to a verified physical location. Event was NOT created.",
         )
 
-    # Final category check taking grounded place into account
-    if place.category == "dining":
-        is_dining = True
+    # Final category check: Grounded physical place category is the authoritative source of truth
+    if place and place.category:
+        if place.category == "dining":
+            is_dining = True
+        elif place.category in ("shopping", "grocery", "retail") and (receipt.tip_amount or 0.0) <= 0.0 and not (getattr(receipt, "category", None) == "DINING"):
+            is_dining = False
+
     ev_type = "DINING" if is_dining else "SHOPPING"
 
     title = f"{ev_type.title()}: {place.name or merchant}"

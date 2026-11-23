@@ -63,22 +63,83 @@ class MapService:
             if ep.address and (street_prefix in ep.address.lower() or ep.address.lower() in addr_clean):
                 return ep
 
+        resolved_category = category or "venue"
+        resolved_lat = latitude
+        resolved_lng = longitude
+
+        # Ground real-world category and coordinates from OpenStreetMap Nominatim
+        if resolved_category in ("venue", "shopping") or resolved_lat is None:
+            disc_cat, disc_lat, disc_lng = self.ground_place_details(name, address)
+            if disc_cat and resolved_category in ("venue", "shopping"):
+                resolved_category = disc_cat
+            if resolved_lat is None and disc_lat is not None:
+                resolved_lat = disc_lat
+            if resolved_lng is None and disc_lng is not None:
+                resolved_lng = disc_lng
+
         resolved_map_url = map_url
-        if not resolved_map_url and latitude is not None and longitude is not None:
-            resolved_map_url = f"https://www.google.com/maps/search/?api=1&query={latitude},{longitude}"
+        if not resolved_map_url and resolved_lat is not None and resolved_lng is not None:
+            resolved_map_url = f"https://www.google.com/maps/search/?api=1&query={resolved_lat},{resolved_lng}"
 
         place = Place(
             id=f"pl_{uuid4().hex[:8]}",
             name=name.strip(),
-            category=category or "venue",
+            category=resolved_category,
             address=address.strip(),
-            latitude=latitude,
-            longitude=longitude,
+            latitude=resolved_lat,
+            longitude=resolved_lng,
             map_url=resolved_map_url,
             google_place_id=google_place_id,
             notes=notes,
         )
         return self.place_repo.create_place(place)
+
+    def ground_place_details(
+        self,
+        name: str,
+        address: Optional[str] = None,
+    ) -> tuple[Optional[str], Optional[float], Optional[float]]:
+        """Query Nominatim POI tags to extract physical category (dining vs shopping) and coordinates."""
+        queries: List[str] = []
+        if address:
+            # Try combining merchant name with locality/city from address
+            parts = [p.strip() for p in address.split(",") if p.strip()]
+            if len(parts) >= 2:
+                queries.append(f"{name}, {parts[-2]}")
+            queries.append(f"{name}, {address}")
+        queries.append(name)
+
+        dining_types = {
+            "restaurant", "fast_food", "cafe", "bar", "pub", "food_court",
+            "ice_cream", "bistro", "diner", "pizzeria", "bakery", "eatery"
+        }
+        shopping_types = {
+            "supermarket", "convenience", "wholesale", "department_store",
+            "clothes", "hardware", "mall", "chemist", "electronics", "shoes", "variety_store"
+        }
+
+        for q in queries:
+            try:
+                res = self.geolocator.geocode(q, addressdetails=True)
+                if res and hasattr(res, "raw"):
+                    raw = res.raw
+                    osm_class = str(raw.get("class", "")).lower()
+                    osm_type = str(raw.get("type", "")).lower()
+                    lat = round(float(res.latitude), 6) if res.latitude else None
+                    lng = round(float(res.longitude), 6) if res.longitude else None
+
+                    if osm_type in dining_types or (osm_class == "amenity" and osm_type in dining_types):
+                        return "dining", lat, lng
+
+                    if osm_class == "shop" or osm_type in shopping_types:
+                        return "shopping", lat, lng
+
+                    if lat and lng:
+                        return None, lat, lng
+            except Exception:
+                pass
+
+        return None, None, None
 
     def search_places(
         self,
