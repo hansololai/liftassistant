@@ -50,7 +50,7 @@ from liftassistant.services.receipt_service import ReceiptService
 def test_db_setup(tmp_path, monkeypatch):
     """Create an isolated test database with the complete schema."""
     db_file = tmp_path / "test_workers.db"
-    monkeypatch.setattr("liftassistant.config.settings.database_url", str(db_file))
+    monkeypatch.setenv("LIFTASSISTANT_DB_PATH", str(db_file))
 
     # Initialize tables
     schema_path = Path("liftassistant/db/schema.sql")
