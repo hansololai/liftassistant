@@ -14,15 +14,23 @@ from typing import Any, Dict, Generator, List, Optional
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DB_PATH = Path(os.environ.get("LIFTASSISTANT_DB_PATH", Path("data") / "liftassistant.db"))
 DEFAULT_SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 
 def get_db_path() -> Path:
-    """Return database path and ensure parent directory exists."""
-    db_path = Path(os.environ.get("LIFTASSISTANT_DB_PATH", DEFAULT_DB_PATH))
+    """Return database path based on active environment (hardcoded to test_liftassistant.db in test)."""
+    from liftassistant.config import get_settings
+    db_path = get_settings().db_path
     db_path.parent.mkdir(parents=True, exist_ok=True)
     return db_path
+
+
+# Dynamic default property for backwards compatibility
+class _DefaultDbPathProxy(Path):
+    def __new__(cls):
+        return get_db_path()
+
+DEFAULT_DB_PATH = get_db_path()
 
 
 # =========================================================================

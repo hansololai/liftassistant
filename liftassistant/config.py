@@ -1,6 +1,8 @@
 """Centralised configuration loaded from environment / .env file."""
 
 from functools import lru_cache
+import os
+from pathlib import Path
 from typing import Literal, Optional
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
@@ -34,6 +36,24 @@ class Settings(BaseSettings):
         if self.device_auth_enabled is not None:
             return self.device_auth_enabled
         return self.environment != "test"
+
+    @property
+    def db_path(self) -> Path:
+        """Database file path. If test, always hardcoded to test_liftassistant.db."""
+        if self.environment == "test":
+            return Path("data") / "test_liftassistant.db"
+
+        # Production / Dev: respect LIFTASSISTANT_DB_PATH from .env or default to liftassistant.db
+        if "LIFTASSISTANT_DB_PATH" in os.environ:
+            return Path(os.environ["LIFTASSISTANT_DB_PATH"])
+        return Path("data") / "liftassistant.db"
+
+    @property
+    def cas_root(self) -> Path:
+        """Receipt and document CAS storage directory."""
+        if self.environment == "test":
+            return Path("data") / "test_receipt_store"
+        return Path(os.environ.get("LIFTASSISTANT_CAS_ROOT", Path("data") / "receipt_store"))
 
     # ── LLM ────────────────────────────────────────────────────────────────
     llm_provider: str = Field("ollama", description="ollama | deepseek | openai | gemini")
