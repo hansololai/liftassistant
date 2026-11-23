@@ -1,8 +1,12 @@
 """Integration test for FastAPI Generators and Email Worker API endpoints."""
 
+import os
 from fastapi.testclient import TestClient
 from liftassistant.api.app import create_app
 from liftassistant.db.connection import init_db
+
+# Configure environment to test
+os.environ["ENVIRONMENT"] = "test"
 
 def test_api_endpoints():
     init_db()

@@ -1,10 +1,40 @@
 """Centralised configuration loaded from environment / .env file."""
 
-from pydantic import Field
+from functools import lru_cache
+from typing import Literal, Optional
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    # ── Environment & Auth ──────────────────────────────────────────────────
+    environment: Literal["dev", "test", "prod"] = Field("dev", description="dev | test | prod")
+    device_auth_enabled: Optional[bool] = Field(
+        None,
+        alias="lift_device_auth_enabled",
+        description="Explicit override for device auth. Defaults to True for dev/prod, False for test.",
+    )
+
+    @field_validator("environment", mode="before")
+    @classmethod
+    def normalize_environment(cls, v: str) -> str:
+        if isinstance(v, str):
+            clean = v.strip().lower()
+            if clean in ("development", "dev"):
+                return "dev"
+            if clean in ("production", "prod"):
+                return "prod"
+            if clean in ("test", "testing"):
+                return "test"
+        return v
+
+    @property
+    def is_device_auth_active(self) -> bool:
+        """Device authentication is active in dev and prod, but disabled in test."""
+        if self.device_auth_enabled is not None:
+            return self.device_auth_enabled
+        return self.environment != "test"
+
     # ── LLM ────────────────────────────────────────────────────────────────
     llm_provider: str = Field("ollama", description="ollama | deepseek | openai | gemini")
     llm_model: str = Field("ollama/deepseek-r1:14b", description="LiteLLM model string")
@@ -43,4 +73,16 @@ class Settings(BaseSettings):
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
-settings = Settings()
+def get_settings() -> Settings:
+    """Return Settings initialized from current environment."""
+    return Settings()
+
+
+class _SettingsProxy:
+    """Dynamic settings accessor that respects environment changes at runtime."""
+
+    def __getattr__(self, name: str):
+        return getattr(get_settings(), name)
+
+
+settings = _SettingsProxy()

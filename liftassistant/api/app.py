@@ -81,9 +81,9 @@ def create_app() -> FastAPI:
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        # Check if auth is disabled via environment variable (e.g. for simple local offline tests)
-        import os
-        if os.environ.get("LIFT_DEVICE_AUTH_ENABLED", "true").lower() in ("false", "0", "no"):
+        # Check if auth is disabled via environment configuration (e.g. test environment)
+        from liftassistant.config import get_settings
+        if not get_settings().is_device_auth_active:
             return await call_next(request)
 
         # Extract token from Cookie, X-Device-Token Header, or Bearer Header

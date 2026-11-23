@@ -9,6 +9,9 @@ import sqlite3
 import unittest
 from fastapi.testclient import TestClient
 
+# Configure environment to test for integration tests
+os.environ["ENVIRONMENT"] = "test"
+
 from liftassistant.api.app import app
 from liftassistant.api.deps import (
     get_db_connection,
@@ -58,7 +61,10 @@ class TestPhase4RestApi(unittest.TestCase):
     def tearDownClass(cls):
         close_connection_pool(TEST_API_DB)
         if TEST_API_DB.exists():
-            os.remove(TEST_API_DB)
+            try:
+                os.remove(TEST_API_DB)
+            except OSError:
+                pass
 
     def setUp(self):
         self.conn = sqlite3.connect(str(TEST_API_DB), check_same_thread=False)
@@ -112,7 +118,7 @@ class TestPhase4RestApi(unittest.TestCase):
         app.dependency_overrides[get_inventory_service] = override_inv_service
         app.dependency_overrides[get_trip_service] = override_trip_service
 
-        self.client = TestClient(app)
+        self.client = TestClient(app, headers={"X-Device-Token": "test"})
 
     def tearDown(self):
         app.dependency_overrides.clear()

@@ -31,6 +31,7 @@ FROM python:3.11-slim AS runtime
 # Set environment variables for production execution
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    ENVIRONMENT=prod \
     FRONTEND_DIST=/app/frontend/dist \
     LIFTASSISTANT_DB_PATH=/app/data/liftassistant.db \
     LIFTASSISTANT_CAS_ROOT=/app/data/receipt_store \

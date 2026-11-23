@@ -11,7 +11,7 @@ services:
     volumes:
       - ./data:/app/data
     environment:
-      - LIFT_DEVICE_AUTH_ENABLED=true
+      - ENVIRONMENT=prod
       - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
       - LLM_BASE_URL=${LLM_BASE_URL:-http://host.docker.internal:11434}
       - LLM_MODEL=${LLM_MODEL:-ollama/deepseek-r1:14b}
