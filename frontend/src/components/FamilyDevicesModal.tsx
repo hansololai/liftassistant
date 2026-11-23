@@ -78,7 +78,7 @@ export const FamilyDevicesModal: React.FC<Props> = ({
   };
 
   const handleRevoke = async (id: string, name: string) => {
-    if (window.confirm(`Revoke access for "${name}"? It will no longer be able to access LiftAssistant.`)) {
+    if (window.confirm(`Revoke access for "${name}"? It will no longer be able to access LifeAssistant.`)) {
       try {
         await apiClient.revokeDevice(id);
         await loadDevices();
@@ -107,7 +107,7 @@ export const FamilyDevicesModal: React.FC<Props> = ({
     >
       <Stack gap="md">
         <Text size="xs" c="dimmed">
-          Physical mobile devices authorized to access LiftAssistant. Each device holds a 10-year cryptographic session token.
+          Physical mobile devices authorized to access LifeAssistant. Each device holds a 10-year cryptographic session token.
         </Text>
 
         {error && (

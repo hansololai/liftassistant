@@ -33,8 +33,8 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     ENVIRONMENT=prod \
     FRONTEND_DIST=/app/frontend/dist \
-    LIFTASSISTANT_DB_PATH=/app/data/liftassistant.db \
-    LIFTASSISTANT_CAS_ROOT=/app/data/receipt_store \
+    LIFEASSISTANT_DB_PATH=/app/data/liftassistant.db \
+    LIFEASSISTANT_CAS_ROOT=/app/data/receipt_store \
     PORT=8000
 
 WORKDIR /app

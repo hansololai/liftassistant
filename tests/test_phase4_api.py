@@ -131,7 +131,7 @@ class TestPhase4RestApi(unittest.TestCase):
         self.assertTrue(resp.headers["content-type"].startswith("application/json"))
         data = resp.json()
         self.assertEqual(data["status"], "healthy")
-        self.assertEqual(data["service"], "liftassistant-api")
+        self.assertEqual(data["service"], "lifeassistant-api")
 
     def test_overview_briefing_json(self):
         resp = self.client.get("/api/v1/overview/briefing")

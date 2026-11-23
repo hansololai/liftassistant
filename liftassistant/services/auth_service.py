@@ -68,7 +68,7 @@ class DeviceAuthService:
 
                 logger.info(
                     "\n" + "=" * 70 + "\n"
-                    "🎉 [LiftAssistant First-Run Device Enrollment Links]\n"
+                    "🎉 [LifeAssistant First-Run Device Enrollment Links]\n"
                     f"  📱 Dad's Phone: /?enroll_token={default_devices[0][2]}\n"
                     f"  📱 Mom's Phone: /?enroll_token={default_devices[1][2]}\n"
                     "Open the link above on your phone browser to permanently authorize it.\n"

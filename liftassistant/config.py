@@ -43,9 +43,10 @@ class Settings(BaseSettings):
         if self.environment == "test":
             return Path("data") / "test_liftassistant.db"
 
-        # Production / Dev: respect LIFTASSISTANT_DB_PATH from .env or default to liftassistant.db
-        if "LIFTASSISTANT_DB_PATH" in os.environ:
-            return Path(os.environ["LIFTASSISTANT_DB_PATH"])
+        # Production / Dev: respect LIFEASSISTANT_DB_PATH / LIFTASSISTANT_DB_PATH from .env or default
+        env_db = os.environ.get("LIFEASSISTANT_DB_PATH") or os.environ.get("LIFTASSISTANT_DB_PATH")
+        if env_db:
+            return Path(env_db)
         return Path("data") / "liftassistant.db"
 
     @property
@@ -53,7 +54,8 @@ class Settings(BaseSettings):
         """Receipt and document CAS storage directory."""
         if self.environment == "test":
             return Path("data") / "test_receipt_store"
-        return Path(os.environ.get("LIFTASSISTANT_CAS_ROOT", Path("data") / "receipt_store"))
+        env_cas = os.environ.get("LIFEASSISTANT_CAS_ROOT") or os.environ.get("LIFTASSISTANT_CAS_ROOT")
+        return Path(env_cas) if env_cas else Path("data") / "receipt_store"
 
     # ── LLM ────────────────────────────────────────────────────────────────
     llm_provider: str = Field("ollama", description="ollama | deepseek | openai | gemini")
@@ -75,8 +77,8 @@ class Settings(BaseSettings):
     # ── iCloud CalDAV ───────────────────────────────────────────────────────
     icloud_username: str = Field("", description="Apple ID email")
     icloud_app_password: str = Field("", description="iCloud app-specific password")
-    icloud_calendar_name: str = Field("LiftAssistant", description="Calendar display name")
-    icloud_reminders_list: str = Field("LiftAssistant", description="Reminders list name")
+    icloud_calendar_name: str = Field("LifeAssistant", description="Calendar display name")
+    icloud_reminders_list: str = Field("LifeAssistant", description="Reminders list name")
 
     # ── Google Calendar (optional alternative) ──────────────────────────────
     google_calendar_id: str = Field("primary")

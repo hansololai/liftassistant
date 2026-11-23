@@ -119,7 +119,7 @@ class TestDeviceAuthService(unittest.TestCase):
         )
         self.assertTrue(enroll_out["success"])
         self.assertEqual(enroll_out["device_name"], "Dad's Phone")
-        self.assertIn("lift_device_session=", mock_res.headers.get("set-cookie", ""))
+        self.assertIn("life_device_session=", mock_res.headers.get("set-cookie", ""))
 
         session_tok = enroll_out["session_token"]
 

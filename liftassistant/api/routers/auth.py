@@ -11,7 +11,8 @@ from liftassistant.services.auth_service import DeviceAuthService
 
 router = APIRouter(prefix="/auth", tags=["Device Authentication"])
 
-COOKIE_NAME = "lift_device_session"
+COOKIE_NAME = "life_device_session"
+FALLBACK_COOKIE_NAME = "lift_device_session"
 COOKIE_MAX_AGE_SECONDS = 315360000  # 10 years
 
 
@@ -25,7 +26,7 @@ class CreateDeviceRequest(BaseModel):
 
 def extract_session_token(request: Request, x_device_token: Optional[str] = None) -> Optional[str]:
     """Extract session token from cookie, X-Device-Token header, or Authorization header."""
-    cookie_token = request.cookies.get(COOKIE_NAME)
+    cookie_token = request.cookies.get(COOKIE_NAME) or request.cookies.get(FALLBACK_COOKIE_NAME)
     if cookie_token and cookie_token.strip():
         return cookie_token.strip()
 

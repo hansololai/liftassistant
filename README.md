@@ -1,4 +1,4 @@
-# 🏋️ LiftAssistant
+# 🌟 LifeAssistant
 
 An AI-powered personal life orchestrator that automatically manages your daily tasks, home maintenance, vacation price tracking, and email intelligence — pushing reminders directly to your iOS Reminders app and Calendar.
 
@@ -20,7 +20,7 @@ An AI-powered personal life orchestrator that automatically manages your daily t
 ## 🏗️ Architecture
 
 ```
-LiftAssistant
+LifeAssistant
 ├── Orchestrator (CrewAI)
 │   ├── Email Agent       ← Gmail API + LLM reasoning
 │   ├── Price Agent       ← Flight/hotel price monitoring

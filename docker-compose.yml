@@ -1,10 +1,10 @@
 services:
-  liftassistant:
+  lifeassistant:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ghcr.io/${DOCKER_IMAGE:-liftassistant}:latest
-    container_name: liftassistant
+    image: ghcr.io/${DOCKER_IMAGE:-lifeassistant}:latest
+    container_name: lifeassistant
     restart: unless-stopped
     ports:
       - "${PORT:-8000}:8000"

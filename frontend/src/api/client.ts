@@ -77,7 +77,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
     if (isNetworkError) {
       throw new ApiError(
-        'Unable to connect to the LiftAssistant server. Please verify the backend is running and reachable.',
+        'Unable to connect to the LifeAssistant server. Please verify the backend is running and reachable.',
         503
       );
     }

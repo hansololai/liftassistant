@@ -68,7 +68,7 @@ def manage_devices(add_name: str = None):
 
     devices = auth_service.list_devices()
     print("\n" + "=" * 60)
-    print("LiftAssistant Authorized Family Devices:")
+    print("LifeAssistant Authorized Family Devices:")
     print("=" * 60)
     for d in devices:
         status_str = "REVOKED" if d["is_revoked"] else ("ACTIVE" if d["is_enrolled"] else "PENDING")
@@ -79,7 +79,7 @@ def manage_devices(add_name: str = None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="LiftAssistant 3.0 CLI")
+    parser = argparse.ArgumentParser(description="LifeAssistant 3.0 CLI")
     parser.add_argument(
         "command",
         nargs="?",

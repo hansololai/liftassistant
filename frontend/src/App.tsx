@@ -1039,7 +1039,7 @@ export default function App() {
     return (
       <MantineProvider defaultColorScheme="light">
         <Box style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Text size="sm" c="dimmed">Connecting to LiftAssistant...</Text>
+          <Text size="sm" c="dimmed">Connecting to LifeAssistant...</Text>
         </Box>
       </MantineProvider>
     );
@@ -1100,7 +1100,7 @@ export default function App() {
                 </Box>
                 <Box>
                   <Text fw={800} size="sm" style={{ letterSpacing: -0.4, lineHeight: 1.2 }}>
-                    LiftAssistant 3.0
+                    LifeAssistant 3.0
                   </Text>
                   <Text size="10px" c="dimmed" visibleFrom="xs">
                     Personal Life OS

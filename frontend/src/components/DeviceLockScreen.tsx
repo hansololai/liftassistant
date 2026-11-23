@@ -73,7 +73,7 @@ export const DeviceLockScreen: React.FC<Props> = ({ onEnrolled }) => {
               <IconLock size={32} />
             </ThemeIcon>
             <Title order={3} ta="center" fw={800}>
-              LiftAssistant Family OS
+              LifeAssistant Family OS
             </Title>
             <Group gap="xs">
               <Badge color="blue" variant="light" size="sm">

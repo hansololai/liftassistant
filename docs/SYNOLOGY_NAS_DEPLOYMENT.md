@@ -1,6 +1,6 @@
-# 🐳 LiftAssistant: Dockerization & Synology NAS Deployment Guide
+# 🐳 LifeAssistant: Dockerization & Synology NAS Deployment Guide
 
-This guide walks through containerizing LiftAssistant and setting up automated Continuous Integration & Continuous Deployment (CI/CD) to **Synology NAS (Container Manager / Docker)**.
+This guide walks through containerizing LifeAssistant and setting up automated Continuous Integration & Continuous Deployment (CI/CD) to **Synology NAS (Container Manager / Docker)**.
 
 ---
 

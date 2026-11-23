@@ -9,8 +9,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png'],
       manifest: {
-        name: 'LiftAssistant - Personal Life OS',
-        short_name: 'LiftAssistant',
+        name: 'LifeAssistant - Personal Life OS',
+        short_name: 'LifeAssistant',
         description: 'Personal Life OS, Digital Ledger, and Family Assistant',
         theme_color: '#228be6',
         background_color: '#1a1b1e',

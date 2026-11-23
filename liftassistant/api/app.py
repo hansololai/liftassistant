@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(
-        title="LiftAssistant API",
+        title="LifeAssistant API",
         description="Unified Personal Life OS REST API backend with family calendar, inventory, and trip tracking.",
         version="1.0.0",
         docs_url="/docs",
@@ -87,7 +87,7 @@ def create_app() -> FastAPI:
             return await call_next(request)
 
         # Extract token from Cookie, X-Device-Token Header, or Bearer Header
-        token = request.cookies.get("lift_device_session")
+        token = request.cookies.get("life_device_session") or request.cookies.get("lift_device_session")
         if not token:
             token = request.headers.get("x-device-token")
         if not token:
@@ -125,9 +125,9 @@ def create_app() -> FastAPI:
 
         request.state.device = device
         response = await call_next(request)
-        if token and "lift_device_session" not in request.cookies:
+        if token and "life_device_session" not in request.cookies and "lift_device_session" not in request.cookies:
             response.set_cookie(
-                key="lift_device_session",
+                key="life_device_session",
                 value=token,
                 max_age=315360000,
                 httponly=True,
@@ -200,7 +200,7 @@ def create_app() -> FastAPI:
         """Health check endpoint."""
         return {
             "status": "healthy",
-            "service": "liftassistant-api",
+            "service": "lifeassistant-api",
             "version": "1.0.0",
         }
 
