@@ -33,7 +33,13 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage application startup and graceful shutdown of background services."""
+    """Manage application startup, database schema creation, and background services."""
+    from liftassistant.db.connection import get_db_path, init_db
+
+    db_path = get_db_path()
+    logger.info("Ensuring database schema exists at %s", db_path)
+    init_db(db_path)
+
     master_worker = get_master_daily_worker()
     master_worker.start()
     yield

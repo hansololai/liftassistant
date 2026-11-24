@@ -185,8 +185,8 @@ class EmailEventGenerator:
 
         self.inbox_dir = inbox_dir or RECEIPTS_INBOX_DIR
         self.inbox_dir.mkdir(parents=True, exist_ok=True)
-        self.credentials_file = credentials_file or settings.gmail_credentials_file
-        self.token_file = token_file or settings.gmail_token_file
+        self.credentials_file = credentials_file or getattr(settings, "effective_gmail_credentials_file", settings.gmail_credentials_file)
+        self.token_file = token_file or getattr(settings, "effective_gmail_token_file", settings.gmail_token_file)
         self._gmail_service = None
 
     def get_effective_system_prompt(self) -> str:

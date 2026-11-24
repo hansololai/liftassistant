@@ -37,14 +37,14 @@ class SchoolMenuService:
         event_repo: EventRepository,
         place_repo: PlaceRepository,
         gen_run_repo: GeneratorRunRepository,
-        token_file: str = "token.json",
+        token_file: Optional[str] = None,
         prompt_path: Optional[Path] = None,
         llm_caller: Optional[Callable[..., str]] = None,
     ):
         self.event_repo = event_repo
         self.place_repo = place_repo
         self.gen_run_repo = gen_run_repo
-        self.token_file = token_file
+        self.token_file = token_file or getattr(settings, "effective_gmail_token_file", settings.gmail_token_file)
         self.prompt_path = prompt_path or (Path("prompts") / "school_lunch_menu.txt")
         self._llm_caller = llm_caller or call_llm
         self._gmail_service = None

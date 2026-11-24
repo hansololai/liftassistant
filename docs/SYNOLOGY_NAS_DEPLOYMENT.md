@@ -95,13 +95,15 @@ services:
     container_name: lifeassistant
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8005:8000"
     volumes:
       - /volume1/docker/lifeassistant/data:/app/data
     environment:
       - ENVIRONMENT=prod
       - LLM_PROVIDER=ollama
-      - LLM_BASE_URL=http://host.docker.internal:11434
+      # If Ollama is running on your PC in the same local network:
+      # e.g., http://192.168.1.55:11434 (make sure OLLAMA_HOST=0.0.0.0:11434 on your PC)
+      - LLM_BASE_URL=http://192.168.1.55:11434
       - LLM_MODEL=ollama/deepseek-r1:14b
       - TZ=America/New_York
     healthcheck:
@@ -166,7 +168,7 @@ To access LiftAssistant securely outside your home network and install it as an 
    - **Destination**:
      - Protocol: `HTTP`
      - Hostname: `localhost`
-     - Port: `8000`
+     - Port: `8005`
 3. **Custom Header Tab**:
    - Click **Create** $\to$ **WebSocket** (adds `Upgrade` and `Connection` headers for real-time SSE updates).
 4. Click **Save**.
@@ -208,3 +210,36 @@ Once any device is authorized, you **never** need the terminal again:
 3. Tap **Copy Magic Enrollment Link**.
 4. Send the link via iMessage, WhatsApp, or AirDrop.
 5. When opened on the other device, it authorizes instantly and prompts **Add to Home Screen**.
+
+---
+
+## 🔑 Part 6: Gmail Credentials & Token (`token.json`)
+
+Since headless Docker containers cannot open a browser for Google OAuth user consent:
+
+1. **Generate `token.json` on your PC**:
+   - Ensure your Google Cloud OAuth client secret file is named `credentials.json` in your local project root.
+   - Run:
+     ```bash
+     python scripts/auth_gmail.py
+     ```
+   - Sign in via the browser window and grant read-only Gmail access. This generates `token.json`.
+
+2. **Place in Synology File Station**:
+   - In Synology DSM, open **File Station**.
+   - Open `/volume1/docker/lifeassistant/data/`.
+   - Upload both `token.json` and `credentials.json` directly into this folder.
+   - LifeAssistant automatically discovers and loads them from `/app/data/token.json` and `/app/data/credentials.json`.
+
+---
+
+## 🧹 Part 7: Resetting / Cleaning Database
+
+If sample mock data was accidentally loaded or you want to start fresh without deleting registered devices:
+
+1. In Synology DSM Container Manager $\to$ **Containers** $\to$ click `lifeassistant` $\to$ **Terminal** $\to$ **Create** (bash).
+2. Run:
+   ```bash
+   python -m liftassistant reset-db
+   ```
+   This removes all sample events, generators, receipts, and products while keeping your authorized family devices and clean schema intact.

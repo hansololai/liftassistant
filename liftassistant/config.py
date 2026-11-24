@@ -74,6 +74,26 @@ class Settings(BaseSettings):
         True, description="Filter out promotions, social, forums, and spam"
     )
 
+    @property
+    def effective_gmail_token_file(self) -> str:
+        """Resolve token.json: checks data/token.json first for persistent Docker volume mapping."""
+        if os.environ.get("GMAIL_TOKEN_FILE"):
+            return os.environ["GMAIL_TOKEN_FILE"]
+        data_token = Path("data") / "token.json"
+        if data_token.exists():
+            return str(data_token)
+        return self.gmail_token_file
+
+    @property
+    def effective_gmail_credentials_file(self) -> str:
+        """Resolve credentials.json: checks data/credentials.json first for persistent Docker volume mapping."""
+        if os.environ.get("GMAIL_CREDENTIALS_FILE"):
+            return os.environ["GMAIL_CREDENTIALS_FILE"]
+        data_creds = Path("data") / "credentials.json"
+        if data_creds.exists():
+            return str(data_creds)
+        return self.gmail_credentials_file
+
     # ── iCloud CalDAV ───────────────────────────────────────────────────────
     icloud_username: str = Field("", description="Apple ID email")
     icloud_app_password: str = Field("", description="iCloud app-specific password")

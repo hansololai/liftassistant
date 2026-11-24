@@ -24,7 +24,34 @@ def init_database():
     from liftassistant.db.connection import get_db_path, init_db
     db_path = get_db_path()
     init_db(db_path)
-    logger.info("Initialized LiftAssistant 3.0 database at %s", db_path)
+    logger.info("Initialized LifeAssistant 3.0 database at %s", db_path)
+
+
+def reset_database():
+    """Wipe all mock/sample data while keeping clean schema and authorized devices."""
+    from liftassistant.db.connection import get_db, get_db_path, init_db
+    from liftassistant.services.auth_service import DeviceAuthService
+    db_path = get_db_path()
+    init_db(db_path)
+    with get_db(db_path) as conn:
+        cursor = conn.cursor()
+        tables = [
+            "events", "shopping_details", "dining_details", "maintenance_details",
+            "kid_activity_details", "medical_details", "travel_details",
+            "receipts", "receipt_items", "stock", "depletion_proposals",
+            "conflicts", "inventory_transactions", "products", "item_multipliers",
+            "product_unit_conversions", "event_generators", "generator_runs",
+            "generator_event_feedback", "trips", "trip_flight_quotes", "trip_hotel_quotes"
+        ]
+        for t in tables:
+            try:
+                cursor.execute(f"DELETE FROM {t}")
+            except Exception:
+                pass
+        conn.commit()
+    auth_service = DeviceAuthService(db_path)
+    auth_service.ensure_default_devices()
+    logger.info("Successfully wiped all mock events, products, and receipts from %s. Database is pristine.", db_path)
 
 
 def seed_db():
@@ -83,9 +110,9 @@ def main():
     parser.add_argument(
         "command",
         nargs="?",
-        default="seed",
-        choices=["init-db", "seed", "evaluate-generators", "api", "devices"],
-        help="Command to run (default: seed)",
+        default="init-db",
+        choices=["init-db", "seed", "reset-db", "evaluate-generators", "api", "devices"],
+        help="Command to run (default: init-db)",
     )
     parser.add_argument(
         "--add",
@@ -96,6 +123,8 @@ def main():
 
     if args.command == "init-db":
         init_database()
+    elif args.command == "reset-db":
+        reset_database()
     elif args.command == "seed":
         seed_db()
     elif args.command == "evaluate-generators":
